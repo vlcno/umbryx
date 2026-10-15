@@ -1,0 +1,70 @@
+{
+  "about": "What changed in Umbryx, newest first. The Home screen of the website and the desktop app shows the first three. Add an entry for every update.",
+  "updates": [
+    {
+      "date": "2026-10-15",
+      "title": "The website matches the app",
+      "added": [
+        "The website has the app's column on the left: Home for friends and messages, then the server.",
+        "Umbryx opens on Home, with your friends and messages, instead of the last channel.",
+        "Right-click anyone's name for a quick menu: profile, message, call, friends.",
+        "Admins can remove someone from the server (right-click, Kick from server). A new invite code lets them back.",
+        "This panel: what changed in the last three updates.",
+        "The top bar shows how many tokens building Umbryx has taken so far, what they would cost, and which Claude model is doing the work.",
+        "Give your friends nicknames only you see: they show on your friends list as \"Nickname (username)\".",
+        "The message box is ready as soon as you open a channel or DM: just start typing, no click needed.",
+        "Settings works like Discord's: change something and a bar asks you to save or reset; voice and video settings apply straight away.",
+        "Hover over a server, Home or someone in the column on the left to see their name.",
+        "Hover over a badge to see its name and why it was given, or over the check beside a partnered server's name, in a bubble pointing at it.",
+        "Hover over a partnered server in the column on the left and its name shows with the partner check.",
+        "Double-click someone's message to reply to it (double-clicking your own still edits it).",
+        "A small icon after someone's name shows what they're on: the desktop app, the website or their phone."
+      ],
+      "fixed": [
+        "Chats stay at the newest message instead of drifting up.",
+        "The emoji picker opens straight away instead of after several seconds.",
+        "Picture strength under Appearance reaches the real 100%.",
+        "Settings no longer pile up on each other in a small window.",
+        "Pressing Enter in Settings no longer signs you out, and Sign out asks first.",
+        "Right-clicking anyone, anywhere they show, opens their menu; the browser's own menu no longer pops up.",
+        "Pressing Enter in a box in Settings, or any other window, saves it instead of doing nothing.",
+        "Friends rows are tidier: nickname and remove friend live in the right-click menu.",
+        "Settings no longer leaves a big gap above the App card: each column stacks its cards."
+      ]
+    },
+    {
+      "date": "2026-10-15",
+      "title": "Invite codes and guests",
+      "added": [
+        "Skip for now: try Umbryx without an account, and message and call your friends.",
+        "New accounts start in direct messages until someone gives them an invite code. Admins make codes in Server settings.",
+        "Delete your own account in Settings. Your messages stay, shown as Deleted user.",
+        "Umbryx Staff can delete other people's accounts from their profile."
+      ],
+      "fixed": [
+        "The member list no longer stays on screen on Friends and in direct messages.",
+        "Signing out leaves a clean sign-in screen, with nothing of your account showing.",
+        "The server's name and picture stay hidden until you are signed in and in the server.",
+        "Badges show on profiles only, no longer next to names.",
+        "Guests are told why they cannot add custom emoji."
+      ]
+    },
+    {
+      "date": "2026-10-14",
+      "title": "Activity, nameplates and badges",
+      "added": [
+        "Show the game you are playing and what you are listening to on Spotify (desktop app).",
+        "Animated nameplates behind your name, or your own picture or clip.",
+        "New badges: Umbryx Staff, Server Owner, Early Supporter and Umbryx Partner.",
+        "YouTube and X links show previews you can play and read in the chat.",
+        "Display names, and stronger noise suppression for your microphone."
+      ],
+      "fixed": [
+        "Clicking a notification opens that conversation.",
+        "Restarting to update puts you back in your voice channel.",
+        "Joining voice no longer mutes you.",
+        "The Windows taskbar shows the Umbryx icon."
+      ]
+    }
+  ]
+}

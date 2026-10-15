@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' file:; script-src 'self' file:; img-src 'self' file:">
+<title>Umbryx</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="titlebar"></div>
+<main class="setup">
+  <form class="card" id="form">
+    <img src="icon.svg" alt="" width="56" height="56">
+    <h1 class="wordmark">Umbryx</h1>
+    <p class="sub" id="sub">Connect to a server to get started.</p>
+    <label class="field"><span>Server address</span>
+      <input id="address" autocomplete="off" spellcheck="false" autofocus>
+    </label>
+    <p class="hint">Ask whoever runs the server. Examples: 192.168.1.50 or chat.example.com</p>
+    <p class="problem" id="problem"></p>
+    <div class="actions">
+      <button class="btn" id="cancel" type="button" hidden>Cancel</button>
+      <button class="btn primary" id="go" type="submit">Connect</button>
+    </div>
+  </form>
+</main>
+<script src="setup.js"></script>
+</body>
+</html>

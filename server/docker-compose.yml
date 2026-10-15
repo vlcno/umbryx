@@ -1,0 +1,75 @@
+# Umbryx server for Docker on Linux. Paste this into Portainer: Stacks > Add stack > Web editor.
+#
+# Before deploying, put the server files on the Linux machine:
+#   /opt/umbryx/app    server.py, certgen.py and the public folder
+#   /opt/umbryx/data   created automatically; accounts, messages and uploads live here
+#
+# The server only needs the Python standard library, so the stock Python image runs it as is:
+# there is no image to build and nothing to install.
+
+services:
+  umbryx:
+    image: python:3.12-slim
+    container_name: umbryx
+    restart: unless-stopped
+    working_dir: /app
+    command: ["python", "-u", "server.py", "--data", "/data", "--config", "/data/config.json"]
+    environment:
+      # CHANGE THIS to the address people use to reach the server: its IP on your network, a
+      # domain name, or both separated by commas. A container cannot find this out by itself.
+      UMBRYX_HOSTS: "192.168.1.50"
+      PYTHONDONTWRITEBYTECODE: "1"
+    ports:
+      - "3443:3443"   # https: the address to give people (https://YOUR-SERVER:3443)
+      - "3000:3000"   # http: only useful on the server itself or behind a reverse proxy
+    volumes:
+      - /opt/umbryx/app:/app:ro
+      - /opt/umbryx/data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/api/info', timeout=4)"]
+      interval: 30s
+      timeout: 6s
+      start_period: 20s
+      retries: 3
+
+  # TURN relay (coturn). It carries a call's audio and video when two people cannot reach each other
+  # directly, as on mobile data or strict office and school networks; otherwise it sits idle. It uses the
+  # host's network so it can open its relay ports itself. Before deploying:
+  #   - set TURN_PASSWORD, TURN_PUBLIC_IP and TURN_LOCAL_IP (in Portainer: the stack's Environment variables)
+  #   - forward UDP 3478, TCP 3478 and UDP 49160-49260 on your router to this machine
+  #   - add the matching "turn:" entry to iceServers in config.json (see README.md, "Calls on mobile data")
+  turn:
+    image: coturn/coturn:4.18.0
+    container_name: umbryx-turn
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - "-n"                                    # every setting is here; there is no config file
+      - "--log-file=stdout"
+      - "--simple-log"
+      - "--listening-port=3478"                 # UDP and TCP
+      - "--min-port=49160"                      # the relay ports: forward this whole UDP range
+      - "--max-port=49260"
+      - "--realm=umbryx"
+      - "--fingerprint"
+      - "--lt-cred-mech"
+      - "--user=umbryx:${TURN_PASSWORD:?set TURN_PASSWORD to a long random password}"
+      - "--external-ip=${TURN_PUBLIC_IP:?set TURN_PUBLIC_IP to your public address}/${TURN_LOCAL_IP:?set TURN_LOCAL_IP to this machine's address on your network}"
+      - "--no-tls"                              # (DTLS is off unless asked for, from coturn 4.18 on)
+      - "--stale-nonce=600"
+      - "--no-software-attribute"
+      - "--no-multicast-peers"
+      - "--total-quota=200"
+      # Never relay into your own network or the machine itself: only the internet side is reachable.
+      - "--denied-peer-ip=0.0.0.0-0.255.255.255"
+      - "--denied-peer-ip=10.0.0.0-10.255.255.255"
+      - "--denied-peer-ip=100.64.0.0-100.127.255.255"
+      - "--denied-peer-ip=127.0.0.0-127.255.255.255"
+      - "--denied-peer-ip=169.254.0.0-169.254.255.255"
+      - "--denied-peer-ip=172.16.0.0-172.31.255.255"
+      - "--denied-peer-ip=192.0.0.0-192.0.0.255"
+      - "--denied-peer-ip=192.168.0.0-192.168.255.255"
+      - "--denied-peer-ip=198.18.0.0-198.19.255.255"
+      - "--denied-peer-ip=::1"
+      - "--denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"
+      - "--denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff"

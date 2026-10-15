@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' file:; script-src 'self' file:; img-src data:">
+<title>Share your screen</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<main class="picker">
+  <header class="drag"><h1>Choose what to share</h1></header>
+  <div class="grid" id="grid"></div>
+  <p class="note" id="note" hidden></p>
+  <footer>
+    <label class="check" id="audioRow" hidden><input type="checkbox" id="audio" checked><span>Share this computer's sound</span></label>
+    <span class="spacer"></span>
+    <button class="btn" id="cancel" type="button">Cancel</button>
+    <button class="btn primary" id="share" type="button" disabled>Share</button>
+  </footer>
+</main>
+<script src="picker.js"></script>
+</body>
+</html>

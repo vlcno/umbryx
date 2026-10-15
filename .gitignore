@@ -1,0 +1,21 @@
+# Never in the repository: accounts, messages, uploads, the server's settings and keys
+server/data/
+server/config.json
+*.pem
+*.key
+
+# The home address (the domain is public; this file is not)
+server-address.txt
+
+# Built apps, download zips and their pieces (made again by desktop/build.bat and the tools)
+downloads/
+dist/
+node_modules/
+
+# Local leftovers
+__pycache__/
+*.pyc
+.claude/
+.DS_Store
+Thumbs.db
+desktop.ini

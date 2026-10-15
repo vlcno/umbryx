@@ -1,0 +1,6 @@
+data
+__pycache__
+*.pyc
+config.json
+start.bat
+README.md

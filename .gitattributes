@@ -1,0 +1,3 @@
+# Files keep Unix line endings everywhere (the server runs on Linux), except Windows batch files.
+* text=auto eol=lf
+*.bat text eol=crlf

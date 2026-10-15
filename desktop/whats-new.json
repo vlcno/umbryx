@@ -1,0 +1,84 @@
+{
+  "1.4.20": [
+    { "title": "Partners on hover", "text": "Hover over a partnered server in the column and the Umbryx Partner check shows beside its name." }
+  ],
+  "1.4.19": [
+    { "title": "Names on hover", "text": "Hover over a server, Home or someone in the column of servers and their name shows in a bubble beside it." }
+  ],
+  "1.4.18": [
+    { "title": "A clean sign-in screen", "text": "Signing out leaves just the sign-in form: the column of servers (when there is only one) and the pictures of who wrote to you go with it." }
+  ],
+  "1.4.17": [
+    { "title": "Quiet when you are away", "text": "GIFs, nameplates and looping clips stand still while you are in another window, and move again when you come back." }
+  ],
+  "1.4.16": [
+    { "title": "Tidy counts", "text": "The red unread counts in the column of servers have their number in the middle." }
+  ],
+  "1.4.15": [
+    { "title": "Notifications open the conversation", "text": "Clicking a notification goes to that direct message or channel, also from the notification centre later on, and also when Umbryx was closed." }
+  ],
+  "1.4.14": [
+    { "title": "Back where you were", "text": "Restarting to update while in a voice channel brings you straight back into it, muted or not as you were." }
+  ],
+  "1.4.13": [
+    { "title": "The right icon, for sure", "text": "The taskbar button names the Umbryx logo itself, so Windows can no longer show an Electron icon it remembered from before." }
+  ],
+  "1.4.12": [
+    { "title": "Tidier column", "text": "With a background picture, the column of servers sits neatly inside its card, the Umbryx logo included." }
+  ],
+  "1.4.11": [
+    { "title": "The right icon", "text": "On Windows, the taskbar, the Start menu and desktop shortcuts show the Umbryx logo, even where Umbryx was first installed before it had one. If the taskbar still shows the old one, unpin Umbryx and pin it again." }
+  ],
+  "1.4.10": [
+    { "title": "Fewer wrong games", "text": "Background programs that happen to share a file name with a game (such as Intel's LMS.exe and the game Last Man Standing) no longer show as playing: only programs with a window count." }
+  ],
+  "1.4.9": [
+    { "title": "New Settings", "text": "Settings is one page of cards: profile, appearance, voice and video, activity and the app, with switches, a microphone level meter, and zoom, What's new and Check for updates where the app menu button was." }
+  ],
+  "1.4.8": [
+    { "title": "Spotify, quicker", "text": "Pausing, resuming and skipping show within a few seconds, and almost at once when Spotify plays on this Windows computer." },
+    { "title": "Spotify, your way", "text": "Settings has a switch of its own to hide what you are listening to. On a profile card, the song, the album and each artist open in Spotify." },
+    { "title": "YouTube full screen", "text": "YouTube videos playing in a link preview can go full screen." }
+  ],
+  "1.4.7": [
+    { "title": "Every game", "text": "Games show under your name even when they never tell Discord anything themselves (The Binding of Isaac, for one): Umbryx recognises them by their program, from Discord's list of about 25,000 games." }
+  ],
+  "1.4.6": [
+    { "title": "What you are playing", "text": "Games that show what you are doing in Discord now show it in Umbryx too: under your name, and on your profile card with the game's picture and how long you have been playing. If Discord is open before Umbryx, the games tell only Discord; start Umbryx first and both show it." },
+    { "title": "Listening to Spotify", "text": "Connect your Spotify in Settings to show the song you are playing, on any device: its cover, artist and album, and how far in you are. The server's owner sets this up once in Server settings." },
+    { "title": "Your choice", "text": "Settings has a switch to stop showing what you are playing." }
+  ],
+  "1.4.5": [
+    { "title": "Quicker restarts", "text": "Clicking the green update arrow closes Umbryx at once, and it reopens on the new version a few seconds later." },
+    { "title": "Screen sharing", "text": "Your own share starts covered, to save your computer the work and to stop a whole screen showing itself over and over; Show my preview brings it back. Your own share has no full-screen button." },
+    { "title": "Direct messages under Home", "text": "Unread direct messages show under the Home button, each person with their count, instead of on the server's button." },
+    { "title": "Favorites", "text": "The star is on GIFs (and APNG and WebP pictures) only, and it sits in the middle of its button." }
+  ],
+  "1.4.4": [
+    { "title": "Pictures fill their circle", "text": "Server pictures and profile pictures in the column of servers, GIFs included, now fill their whole circle instead of sitting squeezed inside it." }
+  ],
+  "1.4.3": [
+    { "title": "Updates arrive by themselves", "text": "When a new version comes out, the green arrow at the bottom of the column of servers appears within seconds. Click it to restart into the new version; no need to look in the menu." }
+  ],
+  "1.4.2": [
+    { "title": "Animated server pictures", "text": "GIF and WebP server pictures and profile pictures now show in the column of servers, animated, instead of the letters." },
+    { "title": "Brighter text", "text": "The standard text is pure white, and a chosen text color changes only the writing, not the panels around it." },
+    { "title": "Server settings", "text": "Saving changes only what you changed, so two owners editing at once no longer undo each other, and the picture and banner each have their own Remove button." }
+  ],
+  "1.4.1": [
+    { "title": "Home", "text": "The button at the top of the column of servers opens Home: your friends in the middle and your direct messages down the side. Your server's button goes back to its channels. People who have written to you show under Home with how many messages are unread." }
+  ],
+  "1.4.0": [
+    { "title": "Themes", "text": "Settings has a new Appearance column: eight ready-made themes, your own background and accent colors, a fade into a second color, and a background picture with its strength. It follows your account to your other devices, and only you see it." },
+    { "title": "A cleaner window", "text": "The title strip now runs the whole width of the window, the column of servers sits over your theme, and your name panel reaches the left edge." },
+    { "title": "Notifications", "text": "New messages, mentions and calls pop up while Umbryx is in the background. Choose all messages, direct messages only, or none in Settings." },
+    { "title": "@mentions", "text": "Type @ to pick someone. They see the message highlighted, a red badge on the channel, and a notification." },
+    { "title": "Search", "text": "The search box at the top finds messages in every channel and your own direct messages. from:name finds one person's, and the results count who wrote what." },
+    { "title": "Bigger cameras", "text": "Cameras fill the voice window. Click one to focus it, double-click for full screen." },
+    { "title": "Call timers", "text": "Voice channels and calls show how long they have been going, the same for everyone." },
+    { "title": "Idle", "text": "After 20 minutes away from the computer you show as Idle, with a yellow moon." },
+    { "title": "Banners and badges", "text": "Banners can be moved and zoomed like profile pictures, and profiles can carry badges such as Staff." },
+    { "title": "Server settings", "text": "Server Owners can change the server's name, picture and banner." },
+    { "title": "Videos", "text": "Videos keep their own shape: phone videos stand tall instead of sitting in a wide black box." }
+  ]
+}
