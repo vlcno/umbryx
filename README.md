@@ -365,3 +365,9 @@ the PATH or the portable copy in `%USERPROFILE%\umbryx-build\node`.
 The interface itself is served by the server, so new features only need the server's files
 updated; the app does not have to be rebuilt or sent out again. When the app itself changes,
 publish it as an update (see "Desktop app updates") instead of sending the zip around.
+
+## Credits
+
+Umbryx is made by **Jorge** ([vlcno](https://github.com/vlcno)) and **Abby**, with **Claude**
+(Anthropic's AI, Claude Opus 5.5 in Claude Code), which wrote the code with them: the server, the website, the
+desktop app and the tools. Commits Claude helped with carry a `Co-Authored-By: Claude` line.
