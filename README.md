@@ -17,10 +17,12 @@ Unzip `Umbryx-Windows.zip` anywhere and double-click `Umbryx.exe` inside the `Um
 is a self-contained program with its own window: no browser is involved and nothing is installed.
 Keep the files in that folder together.
 
-- **Server address:** `server-address.txt` in the folder holds the address to connect to, so
-  nobody has to type it. Without that file the app asks for the address the first time.
-- **Security question:** a home server makes its own security certificate. The app asks once
-  whether to trust that server and then remembers it. It warns you if the certificate ever changes.
+- **Server address:** `server-address.txt` in the folder holds the address to connect to
+  (`https://us.vlcno.xyz`), so nobody has to type it. Without that file the app asks for the address
+  the first time; a name like `us.vlcno.xyz` can be typed without a port.
+- **Security question:** none for `us.vlcno.xyz`, which has a real certificate (through Cloudflare).
+  A server reached by its IP address makes its own certificate: the app asks once whether to trust
+  it and then remembers it, and warns you if the certificate ever changes.
 - **Microphone:** no prompt. The app grants the microphone to the server it is connected to, and
   to nothing else.
 - **Screen sharing:** the app shows its own picker with every screen and window.
@@ -42,7 +44,12 @@ Keep the files in that folder together.
   It never restarts by itself, and asks first if you are in a call. See "Desktop app updates".
 - **Giving it to friends:** send them the zip.
 
-Anyone without the app can use a browser instead: `https://YOUR-SERVER:3443`.
+Anyone without the app can use a browser instead: `https://umbryx.vlcno.xyz` (or
+`https://YOUR-SERVER:3443` for a server of your own).
+
+**Invite links:** admins copy invite links from Server settings, like `https://us.vlcno.xyz/K7QM2XPA`.
+Opening one fills in the code: in Create account for someone new, or as "Join the server?" for an
+account not in the server yet. Any code box also takes a pasted link.
 
 ## The Mac app
 

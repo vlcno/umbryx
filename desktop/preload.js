@@ -83,6 +83,8 @@ contextBridge.exposeInMainWorld('umbryxApp', {
   checkNow: () => ipcRenderer.send('page:check-now'),
   // From 1.4.18: the page is on its sign-in screen (false) or signed in (true); the column of servers then shows.
   signedIn: (on) => ipcRenderer.send('page:signed-in', !!on),
+  // Move to the server's own address for apps, with this page's sign-in and settings (1.4.21 on).
+  moveServer: (info) => ipcRenderer.send('page:move', plain(info)),
   railOver: () => railOver,
   onRail: (listener) => { if (typeof listener === 'function') railListeners.push(listener); },
 });

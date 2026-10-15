@@ -38,7 +38,7 @@
       <input id="loginGate" type="password" autocomplete="off">
     </label>
     <label class="field" id="loginInviteRow" hidden><span>Invite code (optional)</span>
-      <input id="loginInvite" maxlength="12" autocomplete="off" spellcheck="false" placeholder="From someone in the server">
+      <input id="loginInvite" maxlength="100" autocomplete="off" spellcheck="false" placeholder="Code or link, from someone in the server">
       <small class="hint">Without one you start in direct messages with friends, and can join later.</small>
     </label>
     <label class="check"><input type="checkbox" id="loginKeep" checked><span>Sign in automatically on this device</span></label>
@@ -514,7 +514,7 @@
     <p class="hint">A username and password, so you can sign in on any device. You keep your friends, messages and profile, and stay in direct messages with your friends.</p>
     <label class="field"><span>Username</span><input id="claimName" maxlength="24" required autocomplete="username"></label>
     <label class="field"><span>Password</span><input id="claimPass" type="password" required minlength="6" autocomplete="new-password"></label>
-    <label class="field" id="claimInviteRow"><span>Invite code (optional)</span><input id="claimInvite" maxlength="12" autocomplete="off" spellcheck="false" placeholder="To join the server too"></label>
+    <label class="field" id="claimInviteRow"><span>Invite code (optional)</span><input id="claimInvite" maxlength="100" autocomplete="off" spellcheck="false" placeholder="Code or link, to join the server too"></label>
     <p id="claimError" class="form-error" hidden></p>
     <div class="dlg-actions">
       <span class="spacer"></span>

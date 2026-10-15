@@ -95,6 +95,7 @@ main README's "What you are playing" says how to make one).
 | `guests` | `true` by default: **Skip for now** on the sign-in screen, for people without an account, who see only the friends they add. `false` turns it off. |
 | `hosts` | Same as `UMBRYX_HOSTS`: addresses people use to reach the server. |
 | `trustProxy` | Set to `true` only when a reverse proxy sits in front, so sign-in limits apply per visitor. |
+| `appAddress` | The address the desktop app should use, when it is not the website's: `"https://us.vlcno.xyz"`. Apps that came in another way (an IP address) move there by themselves, keeping their sign-ins, once it answers with a trusted certificate and is this same server. Invite links use it too. Empty: apps stay where they are, and links use the website's address. |
 | `maxUploadMB` | Largest file that can be uploaded (200 by default). |
 | `iceServers` | STUN/TURN servers used to connect people's calls to each other. |
 | `httpPort`, `httpsPort` | Leave these alone in Docker; change the left side of `ports:` in the stack instead. |

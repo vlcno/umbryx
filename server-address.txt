@@ -1,0 +1,3 @@
+# The server Umbryx connects to the first time it is opened.
+# To use another server, run "Change server.bat" (or the + in the app's column of servers).
+https://us.vlcno.xyz

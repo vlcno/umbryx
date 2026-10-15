@@ -257,6 +257,27 @@ const session = {
   clear() { store.set('session', ''); tabToken.set(''); },
 };
 
+// The desktop app reaches this server at its own address (welcome.appAddress, e.g. https://us.vlcno.xyz) when it
+// came in some other way, such as the home IP: the page asks it to move there, handing over this device's sign-in
+// and settings (what this page keeps under "umbryx."), so nobody has to sign in again. The app (1.4.21 on) moves
+// only once that address answers with a trusted certificate and is this same server; until then nothing changes.
+let moveOffered = false;
+function offerMove(m) {
+  if (moveOffered || !appShell || typeof appShell.moveServer !== 'function' || !m.appAddress) return;
+  let target;
+  try { target = new URL(m.appAddress); } catch { return; }
+  if (target.protocol !== 'https:' || target.origin === location.origin) return;
+  moveOffered = true;
+  const local = {};
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('umbryx.')) local[key] = localStorage.getItem(key);
+    }
+  } catch { /* nothing kept */ }
+  appShell.moveServer({ address: target.origin + '/', local, tab: tabToken.get() });
+}
+
 // Tells the server to stop accepting a sign-in token. Works without being connected.
 function forgetToken(token) {
   if (!token) return;
@@ -859,6 +880,7 @@ const handlers = {
     }
     $('#conn').hidden = true;
     state.canManage = !!m.canManage;
+    state.appAddress = m.appAddress || '';   // where invite links point (see inviteLink)
     checkBuild(m.build);
     showServerLook(m);
     showApp();
@@ -881,6 +903,18 @@ const handlers = {
       applyDeafen();
       joinVoice(back.channel, true);
     } else updateControls();
+    // In the desktop app, reached another way than the server's address for apps: move there (not while
+    // rejoining a call; the next start offers again).
+    if (!rejoin && !back) offerMove(m);
+    // Opened from an invite link while signed in: join with it (or, for a guest without an account, make one).
+    if (linkInvite) {
+      const code = linkInvite;
+      linkInvite = '';
+      if (!state.info.inviteOnly) { /* nothing to join with */ }
+      else if (state.guest && state.hasPassword) { if (confirm(`Join the server with the invite code ${code}?`)) send({ type: 'redeem', code }); }
+      else if (state.guest) openClaim(code);
+      else toast('You are already in the server.');
+    }
   },
 
   error(m) {
@@ -986,7 +1020,7 @@ const handlers = {
   invites(m) {
     state.invites = Array.isArray(m.invites) ? m.invites : [];
     renderInvites();
-    if (m.made) copyInvite(m.made, `Invite code ${m.made} made`);
+    if (m.made) copyInvite(m.made, true);
   },
 
   // An admin let this guest into the server. The server hangs up; the page connects again at once and comes back
@@ -1364,6 +1398,22 @@ function markDmRead(peer) {
 
 let authMode = 'login';
 
+// Invite codes: what someone typed or pasted, as the bare code, whether the code itself or a link ending in it
+// (us.vlcno.xyz/K7QM2XPA).
+const inviteCodeOf = (text) => String(text || '').trim().replace(/[?#].*$/, '').replace(/\/+$/, '').split('/').pop()
+  .toUpperCase().replace(/[^A-Z0-9]/g, '');
+// An invite link (https://us.vlcno.xyz/K7QM2XPA) opened this page: its code, until it is used. The address bar goes
+// back to the plain address, so a reload does not offer it again.
+let linkInvite = (() => {
+  const hit = location.pathname.match(/^\/([A-Za-z0-9]{8})\/?$/);
+  if (!hit) return '';
+  try { history.replaceState(null, '', '/' + location.search + location.hash); } catch { /* fine as it is */ }
+  return hit[1].toUpperCase();
+})();
+let linkShown = false;
+// The link to an invite: at the server's address for apps if it has one (it serves the website too), else here.
+const inviteLink = (code) => `${(state.appAddress || location.origin).replace(/\/+$/, '')}/${code}`;
+
 function setAuthMode(mode) {
   authMode = mode;
   for (const tab of $$('.tab')) tab.classList.toggle('active', tab.dataset.mode === mode);
@@ -1394,6 +1444,12 @@ function showLogin(error) {
   $('#loginAuto').textContent = 'Continue as ' + quick;
   $('#loginForget').hidden = !remembered;
   $('#loginGuest').hidden = !state.info.guests;
+  // Came from an invite link without being signed in: Create account, with the code in.
+  if (linkInvite && !linkShown && state.info.inviteOnly) {
+    linkShown = true;
+    setAuthMode('register');
+    $('#loginInvite').value = linkInvite;
+  }
   // Nothing of the account stays on show: the title's unread counts, and in the desktop app the column's pictures of
   // who wrote (from 1.4.18 the app also hides the column when this is its only server).
   state.unread.clear();
@@ -1464,7 +1520,8 @@ $('#loginForm').addEventListener('submit', (event) => {
   const name = $('#loginName').value.trim();
   if (!name) return;
   pendingAuth = { mode: authMode, name, password: $('#loginPass').value, serverPassword: $('#loginGate').value,
-    ...(authMode === 'register' && $('#loginInvite').value.trim() ? { invite: $('#loginInvite').value.trim() } : {}) };
+    ...(authMode === 'register' && inviteCodeOf($('#loginInvite').value) ? { invite: inviteCodeOf($('#loginInvite').value) } : {}) };
+  if (pendingAuth.invite) linkInvite = '';   // used here
   keepChoice = $('#loginKeep').checked;
   $('#loginError').hidden = true;
   connect();
@@ -1613,8 +1670,8 @@ function renderGuestNote() {
   const note = $('#guestNote');
   note.hidden = !state.guest;
   if (!state.guest) { note.replaceChildren(); return; }
-  const code = h('input', { placeholder: 'Invite code', maxlength: 12, autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Invite code' });
-  const join = () => { if (code.value.trim()) send({ type: 'redeem', code: code.value.trim() }); };
+  const code = h('input', { placeholder: 'Invite code or link', maxlength: 100, autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Invite code or link' });
+  const join = () => { if (inviteCodeOf(code.value)) send({ type: 'redeem', code: inviteCodeOf(code.value) }); };
   code.addEventListener('keydown', (event) => { if (event.key === 'Enter') join(); });
   note.replaceChildren(
     h('b', { text: state.hasPassword ? 'Not in the server yet' : 'You are a guest' }),
@@ -1624,10 +1681,10 @@ function renderGuestNote() {
       : h('button', { class: 'btn slim primary', type: 'button', onclick: openClaim }, 'Make an account'));
 }
 
-function openClaim() {
+function openClaim(invite) {
   $('#claimName').value = /^guest-\d+$/.test(state.me.name) ? '' : state.me.name;
   $('#claimPass').value = '';
-  $('#claimInvite').value = '';
+  $('#claimInvite').value = typeof invite === 'string' ? invite : '';
   $('#claimInviteRow').hidden = !state.info.inviteOnly;
   $('#claimError').hidden = true;
   $('#claimDlg').showModal();
@@ -1639,7 +1696,7 @@ $('#claimForm').addEventListener('submit', (event) => {
   event.preventDefault();   // stays open until the server says it is done (account-made) or what is wrong
   $('#claimError').hidden = true;
   send({ type: 'claim', name: $('#claimName').value.trim(), password: $('#claimPass').value,
-    ...($('#claimInvite').value.trim() ? { invite: $('#claimInvite').value.trim() } : {}) });
+    ...(inviteCodeOf($('#claimInvite').value) ? { invite: inviteCodeOf($('#claimInvite').value) } : {}) });
 });
 
 // The app's Home button and server buttons: 'home' goes to Friends, 'server' back to the last channel.
@@ -3020,18 +3077,21 @@ function renderInvites() {
   const when = (ms) => (ms ? 'until ' + new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'no end date');
   const list = state.invites || [];
   $('#invList').replaceChildren(...(list.length ? list.map((x) => h('div', { class: 'invite-row' },
-    h('code', { class: 'invite-code', text: x.code }),
+    h('code', { class: 'invite-code', text: x.code, title: inviteLink(x.code) }),
     h('span', { class: 'invite-meta', title: x.joined.length ? 'Joined with it: ' + x.joined.join(', ') : '',
       text: `${x.max ? `${x.uses} of ${x.max} used` : `${x.uses} used`} · ${when(x.expires)}${x.joined.length ? ' · ' + x.joined.join(', ') : ''}` }),
-    h('button', { class: 'btn slim', type: 'button', onclick: () => copyInvite(x.code) }, 'Copy'),
+    h('button', { class: 'btn slim', type: 'button', title: 'Copy the invite link', onclick: () => copyInvite(x.code) }, 'Copy link'),
     h('button', { class: 'ctl sm', type: 'button', title: 'Delete this code', onclick: () => send({ type: 'invite-delete', code: x.code }) }, icon('x'))))
     : [h('div', { class: 'chan-empty', text: 'No invite codes yet.' })]));
 }
 
-function copyInvite(code, said) {
-  const done = () => toast(`${said || 'Invite code'} copied: ${code}`);
-  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(code).then(done, () => toast(`${said || 'Invite code'}: ${code}`));
-  else toast(`${said || 'Invite code'}: ${code}`);
+function copyInvite(code, made) {
+  const link = inviteLink(code);
+  const shown = link.replace(/^https:\/\//, '');
+  const done = () => toast(`${made ? 'Invite link made and copied' : 'Invite link copied'}: ${shown}`);
+  const manual = () => toast(`${made ? 'Invite link made' : 'Invite link'}: ${link}`, 8000);
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(link).then(done, manual);
+  else manual();
 }
 
 $('#invMake').addEventListener('click', () => send({ type: 'invite-create', uses: Number($('#invUses').value), days: Number($('#invDays').value) }));

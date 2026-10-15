@@ -1,4 +1,8 @@
 {
+  "1.4.21": [
+    { "title": "A new address", "text": "Umbryx now reaches the server at us.vlcno.xyz instead of a home IP address. The app moves over by itself, and you stay signed in." },
+    { "title": "Easier to add", "text": "Typing a server's name, like us.vlcno.xyz, in Add a server works without a port number." }
+  ],
   "1.4.20": [
     { "title": "Partners on hover", "text": "Hover over a partnered server in the column and the Umbryx Partner check shows beside its name." }
   ],

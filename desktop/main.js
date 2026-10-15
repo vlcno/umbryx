@@ -230,11 +230,27 @@ async function decideTrust(url, found, known) {
   return found.fingerprint;
 }
 
+// Where to look for a typed address. A name without a port ("us.vlcno.xyz") is tried at its standard address
+// first, as for a server behind a tunnel or proxy, then at a home server's own port (3443).
+function candidates(text) {
+  const url = normalize(text);
+  const typed = String(text || '').trim();
+  const host = bareHost(url);
+  const named = !/^https?:\/\//i.test(typed) && !/:\d+$/.test(typed.split('/')[0]) && !net.isIP(host) && !isThisComputer(host);
+  return named ? [new URL(`https://${url.hostname}/`), url] : [url];
+}
+
 // Adds a server by its address (or finds it again if it is saved already), and shows it.
 async function connect(address) {
-  const url = normalize(address);
+  let url = null;
+  let found = null;
+  let failure = null;
+  for (const option of candidates(address)) {
+    try { found = await probe(option); url = option; break; } catch (err) { failure = failure || err; }
+  }
+  if (!url) throw failure;
   const saved = savedServer(url.origin);
-  const pin = await decideTrust(url, await probe(url), saved ? saved.pin : '');
+  const pin = await decideTrust(url, found, saved ? saved.pin : '');
   if (saved) saved.pin = pin;
   else settings.servers.push({ address: url.href, pin, name: '' });
   saveSettings();
@@ -817,10 +833,12 @@ function dropView(view) {
 // Links in chat open in the normal browser; a server's page only ever shows that server.
 const external = (url) => { if (/^https?:\/\//i.test(url)) shell.openExternal(url); };
 
-function serverView(origin) {
+// prepare: a script run on the server's address before its page loads (moveServer carries a sign-in over with it).
+function serverView(origin, prepare) {
   const view = makeView();
   views.set(origin, view);
   const contents = view.webContents;
+  let preparing = !!prepare;
   contents.setWindowOpenHandler(({ url }) => { external(url); return { action: 'deny' }; });
   contents.on('will-navigate', (event, url) => {
     try { if (new URL(url).origin === origin) return; } catch { /* not a web address */ }
@@ -840,7 +858,7 @@ function serverView(origin) {
     contents.insertCSS(PLAIN_BAR_CSS).catch(() => {});
     contents.executeJavaScript(PLAIN_BAR_SCRIPT).catch(() => {});
   });
-  contents.on('page-title-updated', (_event, title) => readTitle(origin, title));
+  contents.on('page-title-updated', (_event, title) => { if (!preparing) readTitle(origin, title); });
   // A reload starts again beside the column, until the new page says it can have the column over it.
   contents.on('did-start-navigation', (details) => {
     if (!details.isMainFrame || details.isSameDocument) return;
@@ -858,8 +876,86 @@ function serverView(origin) {
   // A video or screen share put full screen covers the whole window, the column of servers included.
   contents.on('enter-html-full-screen', () => { fullView = view; layout(); });
   contents.on('leave-html-full-screen', () => { if (fullView === view) fullView = null; layout(); });
-  contents.loadURL(origin + '/');
+  if (preparing) {
+    // A small page of the same server first (its /api/info), where the storage is set, then the real page.
+    contents.once('did-finish-load', () => {
+      contents.executeJavaScript(prepare).catch(() => {}).finally(() => {
+        preparing = false;
+        contents.loadURL(origin + '/');
+      });
+    });
+    contents.loadURL(origin + '/api/info');
+  } else contents.loadURL(origin + '/');
   return view;
+}
+
+/* ---------- a server moving to its own address for apps ---------- */
+
+// What a server says about itself, through the app's own connection rules (a pinned certificate for a saved
+// home server, the normal checks for anything else).
+async function serverInfo(origin) {
+  try {
+    const res = await session.defaultSession.fetch(origin + '/api/info', { cache: 'no-store', signal: AbortSignal.timeout(8000) });
+    return res.ok ? await res.json() : null;
+  } catch { return null; }
+}
+
+// A saved server's page says the server's address for apps is another one (its appAddress, e.g. https://us.vlcno.xyz)
+// and hands over its sign-in and settings. The app moves only when that address answers with a certificate that
+// is trusted the normal way and is the same server: both addresses report the same server certificate. Until
+// then it stays where it is, and the page asks again the next time it opens.
+let moving = false;
+ipcMain.on('page:move', async (event, info) => {
+  const from = senderOrigin(event);
+  if (!from || moving || !savedServer(from) || !info || typeof info !== 'object') return;
+  let target;
+  try { target = new URL(String(info.address)); } catch { return; }
+  if (target.protocol !== 'https:' || target.origin === from || target.username || target.password) return;
+  moving = true;
+  try {
+    const [here, there] = await Promise.all([serverInfo(from), serverInfo(target.origin)]);
+    if (!here || !there || typeof here.cert !== 'string' || here.cert.length !== 64 || here.cert !== there.cert) return;
+    // What the page keeps under "umbryx." (its sign-in, sound and camera choices...), and a sign-in kept only for
+    // this session.
+    const local = {};
+    let size = 0;
+    for (const [key, value] of Object.entries(info.local && typeof info.local === 'object' ? info.local : {})) {
+      if (!/^umbryx\.[\w.-]{1,64}$/.test(key) || typeof value !== 'string') continue;
+      size += key.length + value.length;
+      if (size > 2 * 1024 * 1024) break;
+      local[key] = value;
+    }
+    const tab = typeof info.tab === 'string' && info.tab.length <= 200 ? info.tab : '';
+    moveServer(from, target.origin, local, tab);
+  } finally {
+    moving = false;
+  }
+});
+
+function moveServer(from, to, local, tab) {
+  const index = settings.servers.findIndex((s) => originOf(s.address) === from);
+  if (index < 0) return;
+  const already = !!savedServer(to);
+  if (already) settings.servers.splice(index, 1);   // the new address is saved too: keep that one
+  else settings.servers[index] = { ...settings.servers[index], address: to + '/', pin: '' };
+  saveSettings();
+  const wasShown = active === from;
+  const view = views.get(from);
+  if (view) { dropView(view); views.delete(from); }
+  for (const map of [pages, overlaid, chrome, homes, railTold]) map.delete(from);
+  signedOut.delete(from);
+  if (active === from) active = null;
+  if (!already) {
+    const prepare = `(() => {
+      const local = ${JSON.stringify(local)};
+      for (const [key, value] of Object.entries(local)) if (localStorage.getItem(key) === null) localStorage.setItem(key, value);
+      const tab = ${JSON.stringify(tab)};
+      if (tab) sessionStorage.setItem('umbryx.session', tab);
+    })()`;
+    serverView(to, prepare);
+  }
+  if (wasShown || !active) showServer(to);
+  else { for (const [o, v] of views) v.setVisible(o === active); updateRail(); }
 }
 
 // Tells each server's page whether it is the one on screen, so it can count unread messages while it is not.

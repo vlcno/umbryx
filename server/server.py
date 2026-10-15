@@ -72,6 +72,10 @@ DEFAULTS = {
     "serverPartner": False,
     # The Client ID of a Spotify developer app, for "Listening to Spotify" (set in Server settings; see README).
     "spotifyClientId": "",
+    # The address the desktop app should use for this server, when that is not the one people type for the website:
+    # "https://us.vlcno.xyz". Apps that came in another way (an IP address) move to it by themselves, keeping their
+    # sign-ins, once it answers with a trusted certificate. Empty: apps stay where they are.
+    "appAddress": "",
     "iceServers": [
         {"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]}
     ],
@@ -848,6 +852,28 @@ def is_ip(text):
         return False
 
 
+_cert_seen = {}
+
+
+def cert_fingerprint():
+    """The SHA-256 of this server's own certificate (as DER): what a desktop app that trusted it remembers it by.
+    Not secret: anyone connecting to the secure port is shown the certificate."""
+    try:
+        stamp = (DATA / "cert.pem").stat().st_mtime
+        if _cert_seen.get("stamp") != stamp:
+            der = ssl.PEM_cert_to_DER_cert((DATA / "cert.pem").read_text("ascii"))
+            _cert_seen.update(stamp=stamp, value=hashlib.sha256(der).hexdigest())
+        return _cert_seen["value"]
+    except (OSError, ValueError):
+        return ""
+
+
+def app_address(cfg):
+    """config.json's "appAddress", if it is a secure address ("https://..."), else ""."""
+    value = str(cfg.get("appAddress") or "").strip()
+    return value if re.match(r"^https://[A-Za-z0-9.-]+(:\d+)?/?$", value) else ""
+
+
 def tls_context(addresses, extra=()):
     """Load the server certificate, creating one on first run or when the server's addresses change."""
     cert, key, meta = DATA / "cert.pem", DATA / "key.pem", DATA / "cert.json"
@@ -1512,8 +1538,10 @@ class Hub:
     # invite codes
 
     def _invite(self, code):
-        """The invite with this code (any capitals, dashes or spaces) while it can still be used, else None."""
-        code = re.sub(r"[^A-Z0-9]", "", str(code or "").upper())
+        """The invite with this code (any capitals, dashes or spaces, or a link ending in it) while it can still be
+        used, else None."""
+        text = re.sub(r"[?#].*$", "", str(code or "").strip()).rstrip("/")
+        code = re.sub(r"[^A-Z0-9]", "", text.rsplit("/", 1)[-1].upper())
         found = next((x for x in self.invites if x["code"] == code), None) if code else None
         if not found or (found["expires"] and found["expires"] <= time.time()) or (found["max"] and found["uses"] >= found["max"]):
             return None
@@ -1740,6 +1768,7 @@ class Hub:
             "serverIcon": "" if guest else self.cfg.get("serverIcon", ""), "serverBanner": "" if guest else self.cfg.get("serverBanner", ""),
             "serverPartner": not guest and bool(self.cfg.get("serverPartner")),
             "spotifyClientId": self.cfg.get("spotifyClientId", ""),
+            "appAddress": app_address(self.cfg),   # where desktop apps should reach this server (see the page's offerMove)
             "canManage": self.can_manage(rec), "build": page_build(),
             "iceServers": self.cfg["iceServers"], "maxUploadMB": self.cfg["maxUploadMB"],
         })
@@ -2744,6 +2773,9 @@ async def handle_http(hub, req, reader, writer):
                 "passwordRequired": bool(hub.cfg.get("password")), "guests": bool(hub.cfg.get("guests", True)),
                 "inviteOnly": bool(hub.cfg.get("inviteOnly", True)),
                 "httpsPort": hub.https_port,
+                # Where the desktop app should reach this server, and the certificate it may know it by already
+                # (so an app can tell that address leads here before moving to it).
+                "appAddress": app_address(hub.cfg), "cert": cert_fingerprint(),
                 # Only a browser on the server computer is told about (or offered) the automatic sign-in.
                 "autoLogin": hub.auto_account()["name"] if hub.auto_account() and is_local(req, writer) else "",
             })
@@ -2755,6 +2787,10 @@ async def handle_http(hub, req, reader, writer):
                 return await respond(writer, 404, "Not found")
             return await serve_file(writer, req, UPDATES, name)
         if path in ("/", "/index.html"):
+            return await serve_page(writer, req)
+        # An invite link (/K7QM2XPA): the page, which finds the code in its address.
+        code = path[1:].rstrip("/")
+        if len(code) == 8 and path.count("/") <= 2 and all(ch in INVITE_CHARS for ch in code.upper()):
             return await serve_page(writer, req)
         return await serve_file(writer, req, PUBLIC, path.lstrip("/"))
     if req.method == "POST" and path == "/api/upload":

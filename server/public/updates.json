@@ -18,7 +18,8 @@
         "Hover over a badge to see its name and why it was given, or over the check beside a partnered server's name, in a bubble pointing at it.",
         "Hover over a partnered server in the column on the left and its name shows with the partner check.",
         "Double-click someone's message to reply to it (double-clicking your own still edits it).",
-        "A small icon after someone's name shows what they're on: the desktop app, the website or their phone."
+        "A small icon after someone's name shows what they're on: the desktop app, the website or their phone.",
+        "Invite links: admins copy a link like us.vlcno.xyz/K7QM2XPA, and opening it fills in the code for you."
       ],
       "fixed": [
         "Chats stay at the newest message instead of drifting up.",

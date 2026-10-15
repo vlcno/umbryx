@@ -167,10 +167,13 @@ def server_address(given):
                 break
     if not text:
         sys.exit("Say where to publish: --server https://YOUR-SERVER:3443")
-    if not re.match(r"^https?://", text):
+    # A bare name or address is a home server's own secure port (3443); a full https:// address without a port is
+    # the standard one (443), as for a server behind a tunnel (https://us.vlcno.xyz).
+    typed_scheme = bool(re.match(r"^https?://", text))
+    if not typed_scheme:
         text = "https://" + text
     url = urlsplit(text)
-    port = url.port or (3443 if url.scheme == "https" and not re.search(r":\d+$", url.netloc) else 443 if url.scheme == "https" else 80)
+    port = url.port or (80 if url.scheme == "http" else 443 if typed_scheme else 3443)
     return url.scheme, url.hostname, port
 
 
