@@ -1862,7 +1862,7 @@ const badge = (n) => h('span', { class: 'chan-badge', text: n > 99 ? '99+' : n }
 
 function sectionHead(label, title, onAdd) {
   return h('div', { class: 'chan-head' }, h('span', { text: label }),
-    h('button', { class: 'ctl sm', type: 'button', title, onclick: onAdd }, icon('plus')));
+    onAdd ? h('button', { class: 'ctl sm', type: 'button', title, onclick: onAdd }, icon('plus')) : null);
 }
 
 function renderSidebar() {
@@ -1877,7 +1877,8 @@ function renderSidebar() {
   if (!homeSplit || home || state.guest) renderHomeSide(root);
   if (!state.guest && (!homeSplit || !home)) {
     for (const [label, kind] of [['Text channels', 'text'], ['Voice channels', 'voice']]) {
-      root.append(sectionHead(label, `New ${kind} channel`, () => openChannelDialog(kind)));
+      // Making, renaming and deleting channels is for the server's admins (the server holds to this too).
+      root.append(sectionHead(label, `New ${kind} channel`, state.canManage ? () => openChannelDialog(kind) : null));
       for (const ch of state.channels.filter((c) => c.type === kind)) root.append(channelRow(ch));
     }
   }
@@ -1998,8 +1999,8 @@ function channelRow(ch) {
       !isText && usersIn(ch.id).length ? h('span', { class: 'room-time', dataset: { room: ch.id } }) : null,
       state.mentions.get(ch.id) ? h('span', { class: 'chan-badge mention-badge', title: 'Mentions of you', text: '@' + state.mentions.get(ch.id) })
         : unread ? badge(unread) : null),
-    h('button', { class: 'ctl sm chan-del', type: 'button', title: 'Rename channel', onclick: () => openChannelDialog(ch.type, ch) }, icon('pencil')),
-    h('button', { class: 'ctl sm chan-del', type: 'button', title: 'Delete channel', onclick: () => deleteChannel(ch) }, icon('x')));
+    state.canManage ? h('button', { class: 'ctl sm chan-del', type: 'button', title: 'Rename channel', onclick: () => openChannelDialog(ch.type, ch) }, icon('pencil')) : null,
+    state.canManage ? h('button', { class: 'ctl sm chan-del', type: 'button', title: 'Delete channel', onclick: () => deleteChannel(ch) }, icon('x')) : null);
   if (isText) return row;
   const people = usersIn(ch.id);
   return h('div', {}, row, people.length ? h('div', { class: 'chan-members' }, people.map((u) => {

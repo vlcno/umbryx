@@ -2995,7 +2995,17 @@ class Hub:
 
     # channels
 
+    def _channel_admin(self, c):
+        """Making, renaming and deleting channels is for the server's admins (deleting a text channel deletes its
+        messages)."""
+        if self.can_manage(c.user):
+            return True
+        c.send({"type": "error", "code": "not-owner", "message": "Only the server's admins can make, rename or delete channels."})
+        return False
+
     def on_channel_create(self, c, m):
+        if not self._channel_admin(c):
+            return
         kind = m.get("kind")
         name = clean_text(m.get("name"), 32)
         if kind not in ("text", "voice") or not name or len(self.channels) >= MAX_CHANNELS:
@@ -3010,6 +3020,8 @@ class Hub:
         log("%s created the %s channel %s" % (c.name, kind, name))
 
     def on_channel_rename(self, c, m):
+        if not self._channel_admin(c):
+            return
         channel = next((x for x in self.channels if x["id"] == m.get("id")), None)
         name = clean_text(m.get("name"), 32)
         if not channel or not name or name == channel["name"]:
@@ -3020,6 +3032,8 @@ class Hub:
         self.broadcast({"type": "channels", "channels": self.channels})
 
     def on_channel_delete(self, c, m):
+        if not self._channel_admin(c):
+            return
         channel = next((x for x in self.channels if x["id"] == m.get("id")), None)
         if not channel:
             return
