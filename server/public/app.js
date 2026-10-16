@@ -471,6 +471,14 @@ const rtc = {
 };
 
 const self = () => state.users.get(state.me.id);
+// Beside someone in voice: deafened or muted, in red when an admin did it.
+function voiceMarks(u) {
+  const byAdmin = (name, tip) => { const mark = icon(name, true); mark.classList.add('mod-mark'); mark.dataset.tip = tip; return mark; };
+  if (u.serverDeafened) return byAdmin('headphones', 'Deafened by an admin');
+  if (u.deafened) return icon('headphones', true);
+  if (u.serverMuted) return byAdmin('mic', 'Muted by an admin');
+  return u.muted ? icon('mic', true) : null;
+}
 const channelById = (id) => state.channels.find((c) => c.id === id);
 const usersIn = (id) => [...state.users.values()].filter((u) => u.voice === id).sort((a, b) => a.name.localeCompare(b.name));
 const firstText = () => (state.channels.find((c) => c.type === 'text') || {}).id;
@@ -1026,18 +1034,36 @@ const handlers = {
   // An admin let this guest into the server. The server hangs up; the page connects again at once and comes back
   // with the whole server.
   admitted() {
+    inviteInfo.clear();
     toast('You have been let into the server. Welcome!');
   },
 
   // An admin removed this account from the server (m.by). The server hangs up; the page comes straight back outside
   // it, in direct messages, with a box for a new invite code.
   kicked(m) {
-    toast(m.by ? `${m.by} removed you from the server.` : 'You were removed from the server.');
+    if (m.banned) toast(m.by ? `${m.by} banned you from the server.` : 'You were banned from the server.', 8000);
+    else toast(m.by ? `${m.by} removed you from the server.` : 'You were removed from the server.');
   },
 
-  // Someone this admin removed from the server.
+  // Someone this admin removed (or banned) from the server.
   removed(m) {
-    toast(`${m.name} was removed from the server.`);
+    toast(m.banned ? `${m.name} was banned from the server.` : `${m.name} was removed from the server.`);
+  },
+
+  // What an invite link in a message shows (its card; see inviteCard).
+  'invite-info'(m) {
+    inviteInfo.set(m.code, m);
+    for (const card of $$(`[data-invite-card="${CSS.escape(m.code)}"]`)) fillInviteCard(card);
+  },
+
+  // Who is banned, for admins (Server settings > Bans, and Unban in their menu).
+  bans(m) {
+    state.bans = Array.isArray(m.bans) ? m.bans : [];
+    renderBans();
+  },
+
+  unbanned(m) {
+    toast(`${m.name} is unbanned. An invite code lets them back in now.`);
   },
 
   'user-update'(m) {
@@ -1056,7 +1082,19 @@ const handlers = {
     }
     // Any change of status starts a new do-not-disturb spell, which hands back the one ping.
     if (user && user.status !== m.user.status) state.pinged.delete(m.user.id);
+    const locks = (u) => `${!!(u && u.serverMuted)},${!!(u && u.serverDeafened)}`;
+    const lockedBefore = locks(user);
     if (user) Object.assign(user, m.user); else state.users.set(m.user.id, m.user);
+    if (locks(m.user) !== lockedBefore) {
+      if (m.user.id === state.me.id) {
+        toast(m.user.serverDeafened ? 'An admin deafened you on this server.' : m.user.serverMuted ? 'An admin muted you on this server.'
+          : 'An admin let you talk and listen again.');
+        applyMic();
+        sendFlags();
+        updateControls();
+      }
+      applyDeafen();
+    }
     if (m.user.id === state.me.id) {
       if (state.info.autoLogin === state.me.name) state.info.autoLogin = m.user.name;
       if (state.me.name !== m.user.name) queueMicrotask(renderGuestNote);   // it shows the username to give friends
@@ -1194,6 +1232,19 @@ const handlers = {
       notifyMessage(msg, { kind: 'dm', id: peer });
     }
     renderSidebar();
+    updateTitle();
+  },
+
+  // This account closed a direct message (here or on another device), or opened a closed one again.
+  'dm-closed'(m) {
+    if (m.closed) {
+      if (!state.dms.has(m.id)) return;
+      state.dms.delete(m.id);
+      if (state.view.type === 'dm' && state.view.id === m.id) openFriends(); else renderSidebar();
+    } else if (!state.dms.has(m.id) && state.users.has(m.id)) {
+      state.dms.set(m.id, { last: Date.now(), unread: 0 });
+      renderSidebar();
+    }
     updateTitle();
   },
 
@@ -1639,7 +1690,9 @@ function renderHomeSide(root) {
         h('span', { class: 'dm-text' }, h('span', { class: 'member-line' }, h('span', { class: 'chan-name', text: nick(user) }), devicesEl(user)),
           note ? h('span', { class: 'member-note', text: note, title: note }) : doing ? activityText(doing) : null),
         typingIn('dm:' + id) ? dots() : null,
-        entry.unread ? badge(entry.unread) : entry.ping ? badge('!') : null)));
+        entry.unread ? badge(entry.unread) : entry.ping ? badge('!') : null),
+      h('button', { class: 'ctl sm chan-del dm-close', type: 'button', title: 'Close DM', 'aria-label': `Close the conversation with ${nick(user)}`,
+        onclick: (event) => { event.stopPropagation(); closeDM(id); } }, icon('x'))));
   }
 }
 
@@ -1735,7 +1788,7 @@ function channelRow(ch) {
       gameMark(u),
       u.sharing ? h('span', { class: 'live-badge', text: 'LIVE' }) : null,
       u.camera ? icon('camera') : null,
-      u.deafened ? icon('headphones', true) : u.muted ? icon('mic', true) : null);
+      voiceMarks(u));
     return el;
   })) : null);
 }
@@ -1939,10 +1992,22 @@ function openText(id) {
 function openDM(id) {
   if (!state.users.has(id) || id === state.me.id) return;
   setView({ type: 'dm', id });
-  if (!state.dms.has(id)) state.dms.set(id, { last: Date.now(), unread: 0 });
+  if (!state.dms.has(id)) {
+    state.dms.set(id, { last: Date.now(), unread: 0 });
+    send({ type: 'dm-close', id, closed: false });   // opened again: back on the list, here and on other devices
+  }
   state.dms.get(id).ping = false;
   showConversation({ type: 'dm-history', with: id });
   markDmRead(id);
+}
+
+// The ✕ on a direct message's row: off the list (read) on all this account's devices, until either of them writes
+// again or it is opened again. Nothing is deleted.
+function closeDM(id) {
+  state.dms.delete(id);
+  send({ type: 'dm-close', id });
+  if (state.view.type === 'dm' && state.view.id === id) openFriends(); else renderSidebar();
+  updateTitle();
 }
 
 function openFriends() {
@@ -2476,6 +2541,67 @@ const previews = new Map();   // link -> { asked, done, data, slots: the places 
 const external = (href) => ({ href, target: '_blank', rel: 'noopener noreferrer' });
 
 // The links in a message that get a card (three at most), leaving out any inside a spoiler or code.
+/* ---------- invite links in messages: a card to join the server, as in Discord ---------- */
+
+const INVITE_CODE = /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8}$/;
+const inviteInfo = new Map();   // code -> null while asked, then what the server said (see 'invite-info')
+
+// Invite links to this server in a message (at its address here or its address for apps), with or without https://.
+function inviteLinksIn(text) {
+  const hosts = new Set([location.host.toLowerCase()]);
+  try { if (state.appAddress) hosts.add(new URL(state.appAddress).host.toLowerCase()); } catch { /* none */ }
+  const plain = String(text || '').replace(/\|\|[\s\S]*?\|\||`[^`]*`/g, ' ');
+  const codes = [];
+  for (const word of plain.split(/\s+/)) {
+    const hit = word.replace(/^[<(]+|[>).,;:!?\]]+$/g, '').match(/^(?:https?:\/\/)?([^/\s]+)\/([A-Za-z0-9]{8})\/?$/i);
+    if (!hit || !hosts.has(hit[1].toLowerCase()) || !INVITE_CODE.test(hit[2].toUpperCase())) continue;
+    if (!codes.includes(hit[2].toUpperCase())) codes.push(hit[2].toUpperCase());
+    if (codes.length === 3) break;
+  }
+  return codes;
+}
+
+function inviteCard(code, mine) {
+  const card = h('div', { class: 'invite-card', dataset: { inviteCard: code, mine: mine ? '1' : '' } });
+  fillInviteCard(card);
+  if (!inviteInfo.has(code)) { inviteInfo.set(code, null); send({ type: 'invite-info', code }); }
+  return card;
+}
+
+function fillInviteCard(card) {
+  const code = card.dataset.inviteCard;
+  const info = inviteInfo.get(code);
+  const label = h('div', { class: 'invite-card-label', text: card.dataset.mine ? 'You sent an invite to join a server' : 'You\'ve been invited to join a server' });
+  if (!info || !info.valid) {
+    card.classList.toggle('invalid', !!info);
+    card.replaceChildren(label, h('div', { class: 'invite-card-row' },
+      h('div', { class: 'invite-card-icon blank' }, icon(info ? 'x' : 'hash')),
+      h('div', { class: 'invite-card-text' },
+        h('b', { text: info ? 'Invalid invite' : 'Loading invite…' }),
+        info ? h('span', { class: 'invite-card-sub', text: 'This invite has expired or been used up. Ask for a new one.' }) : null)));
+    return;
+  }
+  const pic = h('div', { class: 'invite-card-icon' });
+  if (info.serverIcon) pic.append(h('img', { src: info.serverIcon, alt: '' })); else pic.textContent = (info.serverName || '?').trim().slice(0, 2).toUpperCase();
+  const name = h('b', { class: 'invite-card-name' }, info.serverPartner ? (() => { const check = icon('partner'); check.classList.add('invite-card-check'); check.dataset.tip = 'Umbryx Partner'; return check; })() : null,
+    h('span', { text: info.serverName || 'Umbryx' }));
+  const counts = h('div', { class: 'invite-card-sub' },
+    h('span', { class: 'invite-dot online' }), `${info.online} Online`, h('span', { class: 'invite-dot' }), `${info.members} ${info.members === 1 ? 'Member' : 'Members'}`);
+  let button;
+  if (info.member && !state.guest) {
+    button = h('button', { class: 'btn invite-join joined', type: 'button', onclick: () => openText(lastText()) }, 'Joined');
+  } else if (info.banned) {
+    button = h('button', { class: 'btn invite-join', type: 'button', disabled: true, title: 'You are banned from this server' }, 'Banned');
+  } else {
+    button = h('button', { class: 'btn invite-join', type: 'button', onclick: () => (state.hasPassword ? send({ type: 'redeem', code }) : openClaim(code)) }, 'Join');
+  }
+  card.classList.remove('invalid');
+  card.replaceChildren(
+    info.serverBanner ? h('div', { class: 'invite-card-banner' }, h('img', { src: info.serverBanner, alt: '' })) : null,
+    label,
+    h('div', { class: 'invite-card-row' }, pic, h('div', { class: 'invite-card-text' }, name, counts), button));
+}
+
 function previewLinks(text) {
   const plain = String(text || '').replace(/\|\|[\s\S]*?\|\||`[^`]*`/g, ' ');
   const found = [];
@@ -2689,6 +2815,7 @@ function messageEl(m, prev, bare) {
   else if (m.text) body.append(textEl(m.text, m.edited));
   for (const a of m.attachments || []) body.append(attachmentEl(a));
   if (!bare && !editing) for (const url of previewLinks(m.text)) body.append(previewSlot(url));
+  if (!bare && !editing) for (const code of inviteLinksIn(m.text)) body.append(inviteCard(code, mine));
   const action = (glyph, title, run, extra) => h('button', { class: 'ctl sm' + (extra ? ' ' + extra : ''), type: 'button', title, onclick: run }, icon(glyph));
   const actions = bare ? null : h('div', { class: 'msg-actions' },
     action('reply', 'Reply', () => startReply(m)),
@@ -3069,6 +3196,8 @@ function openServerSettings() {
   renderServerDraft();
   $('#srvInvites').hidden = !state.info.inviteOnly;
   if (state.info.inviteOnly) { renderInvites(); send({ type: 'invites' }); }
+  renderBans();
+  send({ type: 'bans' });
   $('#serverDlg').showModal();
 }
 
@@ -3083,6 +3212,18 @@ function renderInvites() {
     h('button', { class: 'btn slim', type: 'button', title: 'Copy the invite link', onclick: () => copyInvite(x.code) }, 'Copy link'),
     h('button', { class: 'ctl sm', type: 'button', title: 'Delete this code', onclick: () => send({ type: 'invite-delete', code: x.code }) }, icon('x'))))
     : [h('div', { class: 'chan-empty', text: 'No invite codes yet.' })]));
+}
+
+// Who is banned: who banned them and when, and Unban.
+function renderBans() {
+  const list = state.bans || [];
+  $('#srvBans').hidden = !state.canManage;
+  const day = (ms) => (ms ? new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
+  $('#banList').replaceChildren(...(list.length ? list.map((b) => h('div', { class: 'invite-row' },
+    h('b', { class: 'ban-name', text: b.name }),
+    h('span', { class: 'invite-meta', text: [b.by ? `by ${b.by}` : '', day(b.at)].filter(Boolean).join(' · ') }),
+    h('button', { class: 'btn slim', type: 'button', onclick: () => send({ type: 'unban', id: b.id }) }, 'Unban')))
+    : [h('div', { class: 'chan-empty', text: 'Nobody is banned.' })]));
 }
 
 function copyInvite(code, made) {
@@ -3626,11 +3767,25 @@ function personActions(user) {
       if (confirm(`Let ${nick(user)} into the server? They will see its channels and members, and everyone will see them.`)) send({ type: 'admit', id: user.id });
     });
   }
-  // Admins can remove (kick) a member from the server; the server refuses for admins and canDeleteStaff accounts.
+  // Admins: mute or deafen someone in voice, remove (kick) or ban them. The server refuses for admins and
+  // canDeleteStaff accounts.
+  if (state.canManage && !user.guest) {
+    add(user.serverMuted ? 'Remove server mute' : 'Server mute', () => send({ type: 'server-mute', id: user.id, on: !user.serverMuted }));
+    add(user.serverDeafened ? 'Remove server deafen' : 'Server deafen', () => send({ type: 'server-deafen', id: user.id, on: !user.serverDeafened }));
+  }
   if (state.canManage && !user.guest) {
     add('Kick from server', () => {
       if (confirm(`Kick ${nick(user)} from the server? They keep their account and their direct messages with friends, but lose the channels until someone gives them a new invite code.`)) {
         send({ type: 'kick', id: user.id });
+      }
+    }, 'danger');
+  }
+  if (state.canManage && (state.bans || []).some((b) => b.id === user.id)) {
+    add('Unban', () => send({ type: 'unban', id: user.id }));
+  } else if (state.canManage) {
+    add('Ban from server', () => {
+      if (confirm(`Ban ${nick(user)} from the server? They lose the channels, and no invite code lets them back in until an admin unbans them. They keep their account and their direct messages with friends.`)) {
+        send({ type: 'ban', id: user.id });
       }
     }, 'danger');
   }
@@ -4033,7 +4188,7 @@ async function ensureMic(replace) {
   }
   const stream = clean ? clean.stream : captured;
   const track = stream.getAudioTracks()[0];
-  track.enabled = !rtc.muted;
+  track.enabled = !rtc.muted && !voiceLocked();
   const mic = { stream, track, raw: captured, clean, source: null, analyser: null };
   try {
     mic.source = rtc.ctx.createMediaStreamSource(stream);
@@ -4115,30 +4270,42 @@ function addMicTo(peer) {
 
 function sendFlags() {
   if (!rtc.channel) return;
-  send({ type: 'voice-flags', muted: rtc.muted || !rtc.mic, deafened: rtc.deafened, sharing: !!rtc.screen, camera: !!rtc.camera });
+  send({ type: 'voice-flags', muted: rtc.muted || !rtc.mic || voiceLocked(), deafened: rtc.deafened || !!(self() && self().serverDeafened),
+    sharing: !!rtc.screen, camera: !!rtc.camera });
+}
+
+// Muted or deafened by one of the server's admins (user.serverMuted / serverDeafened): the microphone stays off and,
+// when deafened, nobody plays, until an admin takes it off. Someone an admin muted is not played here either.
+const voiceLocked = () => !!(self() && (self().serverMuted || self().serverDeafened));
+const silenced = (peerId) => { const user = state.users.get(peerId); return !!(user && (user.serverMuted || user.serverDeafened)); };
+function applyMic() {
+  if (rtc.mic) rtc.mic.track.enabled = !rtc.muted && !voiceLocked();
 }
 
 async function toggleMic() {
+  if (voiceLocked()) { toast(self().serverDeafened ? 'An admin deafened you on this server.' : 'An admin muted you on this server.'); return; }
   if (rtc.channel && !rtc.mic) {
     if (!(await ensureMic())) { toast(micHelp(), 7000); updateControls(); return; }
     rtc.muted = false;
   } else rtc.muted = !rtc.muted;
   if (!rtc.muted && rtc.deafened) { rtc.deafened = false; applyDeafen(); }
-  if (rtc.mic) rtc.mic.track.enabled = !rtc.muted;
+  applyMic();
   sendFlags(); updateControls();
 }
 
 function toggleDeafen() {
+  if (self() && self().serverDeafened) { toast('An admin deafened you on this server.'); return; }
   rtc.deafened = !rtc.deafened;
   if (rtc.deafened) { rtc.mutedBeforeDeafen = rtc.muted; rtc.muted = true; }
   else rtc.muted = rtc.mutedBeforeDeafen;
-  if (rtc.mic) rtc.mic.track.enabled = !rtc.muted;
+  applyMic();
   applyDeafen();
   sendFlags(); updateControls();
 }
 
 function applyDeafen() {
-  for (const peer of rtc.peers.values()) if (peer.audio) peer.audio.muted = rtc.deafened;
+  const deaf = rtc.deafened || !!(self() && self().serverDeafened);
+  for (const peer of rtc.peers.values()) if (peer.audio) peer.audio.muted = deaf || silenced(peer.id);
   syncStage();
 }
 
@@ -4335,7 +4502,7 @@ function attachVoice(peer, stream) {
   const user = state.users.get(peer.id);
   peer.audio.srcObject = stream;
   peer.audio.volume = (user && volumes[user.id]) ?? 1;
-  peer.audio.muted = rtc.deafened;
+  peer.audio.muted = rtc.deafened || !!(self() && self().serverDeafened) || silenced(peer.id);
   applyOutput(peer.audio);
   peer.audio.play().catch(() => {});
   try {
@@ -4873,7 +5040,7 @@ function syncStage() {
     let el = tiles.get('user:' + u.id);
     if (!el) { el = personTile(u); tiles.set('user:' + u.id, el); $('#people').append(el); }
     el.classList.toggle('speaking', rtc.speaking.has(u.id));
-    el.parts.marks.replaceChildren(...[u.deafened ? icon('headphones', true) : u.muted ? icon('mic', true) : null].filter(Boolean));
+    el.parts.marks.replaceChildren(...[voiceMarks(u)].filter(Boolean));
     const linking = !mine && (!peer || peer.pc.connectionState !== 'connected');
     el.parts.status.textContent = linking ? 'Connecting…' : u.sharing ? (mine ? 'Sharing your screen' : 'Sharing their screen') : '';
     const camera = !u.camera ? null : mine ? (rtc.camera ? rtc.camera.stream : null) : (peer ? peer.cameraStream : null);
@@ -5068,10 +5235,11 @@ function syncPip() {
 
 function updateControls() {
   const inVoice = !!rtc.channel;
-  const micOff = rtc.muted || (inVoice && !rtc.mic);
+  const micOff = rtc.muted || (inVoice && !rtc.mic) || voiceLocked();
+  const deaf = rtc.deafened || !!(self() && self().serverDeafened);
   const spec = {
-    mic: () => [icon('mic', micOff), micOff ? 'Unmute' : 'Mute', micOff ? 'on' : ''],
-    deafen: () => [icon('headphones', rtc.deafened), rtc.deafened ? 'Undeafen' : 'Deafen', rtc.deafened ? 'on' : ''],
+    mic: () => [icon('mic', micOff), voiceLocked() ? 'Muted by an admin' : micOff ? 'Unmute' : 'Mute', micOff ? 'on' : ''],
+    deafen: () => [icon('headphones', deaf), self() && self().serverDeafened ? 'Deafened by an admin' : deaf ? 'Undeafen' : 'Deafen', deaf ? 'on' : ''],
     share: () => [icon('screen'), rtc.screen ? 'Sharing' : 'Share screen', rtc.screen ? 'live' : ''],
     camera: () => [icon('camera', inVoice && !rtc.camera), rtc.camera ? 'Stop camera' : 'Camera', rtc.camera ? 'live' : ''],
     leave: () => [icon('hangup'), channelById(rtc.channel) || !inVoice ? 'Leave' : 'Hang up', ''],

@@ -167,6 +167,30 @@ a { color: var(--accent); }
 .head-sub .room-time { font-size: inherit; }
 .head-sub .room-time:not(:empty)::before { content: "·"; margin: 0 6px; }
 .chan:hover .chan-del, .chan-del:focus-visible { visibility: visible; }
+.mod-mark { color: var(--live); }   /* muted or deafened by an admin */
+/* an invite link's card under a message, as in Discord */
+.invite-card { width: min(432px, 100%); margin-top: 6px; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--raised); }
+.invite-card-banner { height: 64px; overflow: hidden; }
+.invite-card-banner img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.invite-card-label { padding: 12px 16px 8px; color: var(--dim); font-size: 11.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.invite-card-row { display: flex; align-items: center; gap: 14px; padding: 0 16px 14px; }
+.invite-card-icon { display: grid; place-items: center; flex: none; width: 50px; height: 50px; overflow: hidden; border-radius: 16px;
+  background: var(--hover); color: var(--text); font-weight: 700; }
+.invite-card-icon img { width: 100%; height: 100%; object-fit: cover; }
+.invite-card-icon.blank { color: var(--faint); }
+.invite-card.invalid .invite-card-icon.blank { color: var(--live); }
+.invite-card-text { display: grid; gap: 3px; flex: 1; min-width: 0; }
+.invite-card-name { display: flex; align-items: center; gap: 5px; min-width: 0; font-size: 16px; }
+.invite-card-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.invite-card-check svg { width: 16px; height: 16px; }
+.invite-card-sub { display: flex; align-items: center; gap: 5px; color: var(--dim); font-size: 13px; }
+.invite-dot { width: 8px; height: 8px; margin-left: 4px; border-radius: 50%; background: var(--faint); }
+.invite-dot:first-child { margin-left: 0; }
+.invite-dot.online { background: var(--ok); }
+.invite-join { flex: none; min-width: 72px; border-color: var(--ok); background: var(--ok); color: #03170c; font-weight: 600; }
+.invite-join.joined { border-color: var(--line); background: var(--hover); color: var(--text); }
+.invite-join:disabled { opacity: .6; cursor: default; }
+.ban-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chan-members { display: grid; gap: 2px; padding: 2px 0 6px 30px; }
 .vm { display: flex; align-items: center; gap: 8px; height: 28px; padding-right: 6px; border: 0; background: none; color: var(--dim); font-size: 13px; text-align: left; }
 .vm-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

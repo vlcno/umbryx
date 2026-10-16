@@ -19,7 +19,10 @@
         "Hover over a partnered server in the column on the left and its name shows with the partner check.",
         "Double-click someone's message to reply to it (double-clicking your own still edits it).",
         "A small icon after someone's name shows what they're on: the desktop app, the website or their phone.",
-        "Invite links: admins copy a link like us.vlcno.xyz/K7QM2XPA, and opening it fills in the code for you."
+        "Invite links: admins copy a link like us.vlcno.xyz/K7QM2XPA, and opening it fills in the code for you.",
+        "Close a direct message with the ✕ on its row: it leaves your list until one of you writes again.",
+        "Admins can server mute, server deafen and ban people from the menu on their name; Server settings lists the bans.",
+        "Post an invite link in a chat and it shows a card with the server and a Join button, like Discord."
       ],
       "fixed": [
         "Chats stay at the newest message instead of drifting up.",

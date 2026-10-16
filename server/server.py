@@ -979,6 +979,7 @@ class Client:
         self.since = self.last_seen = time.monotonic()
         self.recent = deque(maxlen=8)
         self.embed_asks = deque()                # when this connection last asked for link previews
+        self.invite_asks = deque(maxlen=30)      # when it last asked about invite links (on_invite_info)
 
     @property
     def id(self):
@@ -1041,7 +1042,9 @@ class Hub:
             "emoji-add": self.on_emoji_add, "emoji-remove": self.on_emoji_remove, "favorite": self.on_favorite,
             "chat": self.on_chat, "history": self.on_history, "typing": self.on_typing,
             "message-edit": self.on_message_edit,
-            "dm-send": self.on_dm_send, "dm-history": self.on_dm_history, "dm-read": self.on_dm_read,
+            "dm-send": self.on_dm_send, "dm-history": self.on_dm_history, "dm-read": self.on_dm_read, "dm-close": self.on_dm_close,
+            "server-mute": self.on_server_mute, "server-deafen": self.on_server_deafen,
+            "ban": self.on_ban, "unban": self.on_unban, "bans": self.on_bans, "invite-info": self.on_invite_info,
             "friend-add": self.on_friend_add, "friend-accept": self.on_friend_accept,
             "friend-remove": self.on_friend_remove,
             "voice-join": self.on_voice_join, "voice-leave": self.on_voice_leave, "voice-flags": self.on_voice_flags,
@@ -1130,6 +1133,8 @@ class Hub:
                 # Idle once every device it is signed in on has been left alone (see on_idle).
                 "idle": online and all(x.idle for x in self.conns(rec["id"])),
                 "activities": self.shown_activities(rec["id"]),
+                # Muted or deafened by an admin (see on_server_mute): kept until an admin takes it off.
+                "serverMuted": bool(rec.get("serverMuted")), "serverDeafened": bool(rec.get("serverDeafened")),
                 "devices": self.devices_of(rec["id"]),   # what they are on: "desktop", "web", "mobile"
                 "online": online, **(talker.voice_state() if talker else NO_VOICE)}
 
@@ -1150,7 +1155,8 @@ class Hub:
             return None
         shown = self.public(rec)
         if seen == "name":
-            shown.update(about="", note="", noteUntil=0, idle=False, activities=[], devices=[], online=False, **NO_VOICE)
+            shown.update(about="", note="", noteUntil=0, idle=False, activities=[], devices=[], online=False,
+                         serverMuted=False, serverDeafened=False, **NO_VOICE)
         elif viewer.get("guest") and self.channel(shown["voice"], "voice"):
             shown.update(NO_VOICE)   # guests do not see the server's voice channels, nor who is in them
         return shown
@@ -1479,7 +1485,7 @@ class Hub:
         log("guest %s made an account" % name)
         self.send_to(rec["id"], {"type": "account-made", "name": name})
         self.broadcast({"type": "user-update", "user": self.public(rec)})   # a new name, and the Early Supporter badge
-        if invite:
+        if invite and not rec.get("banned"):
             self._use_invite(invite, rec)
             self._let_in(rec, "with an invite code")
 
@@ -1497,6 +1503,8 @@ class Hub:
             c.send({"type": "error", "code": "admit",
                     "message": "%s needs to make an account first (Make an account, at the top of their sidebar)." % rec["name"]})
             return
+        if rec.pop("banned", None):   # letting a banned person in is unbanning them
+            self._send_bans()
         self._let_in(rec, "let in by %s" % c.name)
 
     def _let_in(self, rec, how):
@@ -1535,6 +1543,101 @@ class Hub:
             x.send({"type": "kicked", "by": c.name})
             x.writer.close()
 
+    # moderation: server mute, server deafen, ban
+
+    def _moderated(self, c, m, verb):
+        """The account an admin acts on (verb: "server mute", "ban"...), or None after saying why not. Not an admin
+        or a canDeleteStaff account, not yourself."""
+        if not self.can_manage(c.user):
+            c.send({"type": "error", "code": "not-owner", "message": "Only the server's admins can %s people." % verb})
+            return None
+        rec = self.users.get(m.get("id"))
+        if not rec or rec is c.user or rec.get("deleted"):
+            return None
+        if self.can_manage(rec) or self._listed(rec, "canDeleteStaff"):
+            c.send({"type": "error", "code": "moderate", "message": "%s is one of the server's admins, and admins can't be muted, deafened, kicked or banned." % rec["name"]})
+            return None
+        return rec
+
+    def _show_user(self, rec):
+        """Tells everyone who may see rec how rec looks now."""
+        for client in self.everyone():
+            shown = self.public_for(client.user, rec)
+            if shown:
+                client.send({"type": "user-update", "user": shown})
+
+    def _set_voice_lock(self, c, m, key, verb):
+        rec = self._moderated(c, m, verb)
+        if not rec:
+            return
+        on = m.get("on", True) is not False
+        if bool(rec.get(key)) == on:
+            return
+        if on:
+            rec[key] = True
+        else:
+            rec.pop(key, None)
+        self._save_users()
+        log("%s %s %s" % (c.name, ("%sed" % verb.replace("server ", "server-").rstrip("e")) if on else "lifted the %s of" % verb, rec["name"]))
+        self._show_user(rec)
+
+    def on_server_mute(self, c, m):
+        """An admin mutes someone in voice (on: false takes it off). Their app keeps their microphone off, and
+        everyone else's app does not play them."""
+        self._set_voice_lock(c, m, "serverMuted", "server mute")
+
+    def on_server_deafen(self, c, m):
+        """An admin deafens someone in voice (on: false takes it off): their app plays nobody, and keeps them muted."""
+        self._set_voice_lock(c, m, "serverDeafened", "server deafen")
+
+    def on_ban(self, c, m):
+        """An admin bans someone: out of the server (like a kick) for good, no invite code lets them back in until an
+        admin unbans them (on_unban) or lets them in. They keep their account and their direct messages with friends."""
+        rec = self._moderated(c, m, "ban")
+        if not rec or rec.get("banned"):
+            return
+        rec["banned"] = {"by": c.user["id"], "at": int(time.time() * 1000)}
+        was_member = not rec.get("guest")
+        rec["guest"] = True
+        self._save_users()
+        log("%s banned %s from the server" % (c.name, rec["name"]))
+        if was_member:
+            for client in self.everyone():
+                if client.id != rec["id"]:
+                    shown = self.public_for(client.user, rec)
+                    client.send({"type": "user-update", "user": shown} if shown else {"type": "user-hidden", "id": rec["id"]})
+            for x in list(self.conns(rec["id"])):
+                x.send({"type": "kicked", "by": c.name, "banned": True})
+                x.writer.close()
+        c.send({"type": "removed", "id": rec["id"], "name": rec["name"], "banned": True})
+        self._send_bans()
+
+    def on_unban(self, c, m):
+        if not self.can_manage(c.user):
+            c.send({"type": "error", "code": "not-owner", "message": "Only the server's admins can unban people."})
+            return
+        rec = self.users.get(m.get("id"))
+        if not rec or not rec.pop("banned", None):
+            return
+        self._save_users()
+        log("%s unbanned %s" % (c.name, rec["name"]))
+        c.send({"type": "unbanned", "id": rec["id"], "name": rec["name"]})
+        self._send_bans()
+
+    def on_bans(self, c, m):
+        if self.can_manage(c.user):
+            self._send_bans(c)
+
+    def _send_bans(self, only=None):
+        """Who is banned, to every admin's devices (or only to one asking)."""
+        name = lambda uid: (self.users.get(uid) or {}).get("name", "")
+        listed = sorted(({"id": r["id"], "name": r["name"], "by": name(r["banned"].get("by")), "at": r["banned"].get("at", 0)}
+                         for r in self.users.values() if isinstance(r.get("banned"), dict) and not r.get("deleted")),
+                        key=lambda x: -x["at"])
+        for client in ([only] if only else self.everyone()):
+            if self.can_manage(client.user):
+                client.send({"type": "bans", "bans": listed})
+
     # invite codes
 
     def _invite(self, code):
@@ -1546,6 +1649,27 @@ class Hub:
         if not found or (found["expires"] and found["expires"] <= time.time()) or (found["max"] and found["uses"] >= found["max"]):
             return None
         return found
+
+    def on_invite_info(self, c, m):
+        """What an invite link in a message shows (its card): for a code that works, the server's name, picture,
+        banner and partner check and how many are online and in it; else only that it does not work. Whether the one
+        asking is in the server already (Joined) or banned comes along."""
+        now = time.time()
+        if len(c.invite_asks) == c.invite_asks.maxlen and now - c.invite_asks[0] < 60:
+            return   # a page asks once per code; this many is someone guessing codes
+        c.invite_asks.append(now)
+        text = re.sub(r"[?#].*$", "", str(m.get("code") or "").strip()).rstrip("/")
+        code = re.sub(r"[^A-Z0-9]", "", text.rsplit("/", 1)[-1].upper())[:12]
+        invite = self._invite(code)
+        if not invite:
+            c.send({"type": "invite-info", "code": code, "valid": False})
+            return
+        members = [r for r in self.users.values() if not r.get("guest") and not r.get("deleted")]
+        c.send({"type": "invite-info", "code": code, "valid": True,
+                "serverName": self.cfg["serverName"], "serverIcon": self.cfg.get("serverIcon", ""),
+                "serverBanner": self.cfg.get("serverBanner", ""), "serverPartner": bool(self.cfg.get("serverPartner")),
+                "members": len(members), "online": sum(1 for r in members if self.conns(r["id"])),
+                "member": not c.user.get("guest"), "banned": bool(c.user.get("banned"))})
 
     def _use_invite(self, invite, rec):
         invite["uses"] += 1
@@ -1612,6 +1736,9 @@ class Hub:
             return
         if not rec.get("hash"):
             c.send({"type": "error", "code": "invite", "message": "Make an account first: invite codes are for accounts with a password."})
+            return
+        if rec.get("banned"):
+            c.send({"type": "error", "code": "banned", "message": "You are banned from this server. Only its admins can let you back in."})
             return
         invite = self._invite(m.get("code"))
         if not invite:
@@ -2147,6 +2274,9 @@ class Hub:
             if rec["id"] not in pair or not msgs:
                 continue
             other = pair[0] if pair[1] == rec["id"] else pair[1]
+            closed = (rec.get("dmClosed") or {}).get(other)
+            if closed and msgs[-1]["ts"] <= closed:
+                continue   # closed, and nothing written since
             seen = rec["read"].get(other, 0)
             unread = sum(1 for msg in msgs if msg["uid"] == other and msg["id"] > seen)
             out.append({"with": other, "last": msgs[-1]["ts"], "unread": unread})
@@ -2348,6 +2478,26 @@ class Hub:
             self._release_uploads([url])
         self._save_users()
         self.send_to(c.id, {"type": "favorites", "favorites": favorites})
+
+    def on_dm_close(self, c, m):
+        """Closing a direct message (the ✕ on its row) takes it off this account's list, read, until either of them
+        writes again; "closed": false (opening it again) puts it back. Nothing is deleted. All the account's devices hear."""
+        other = m.get("id")
+        if other not in self.users or other == c.id:
+            return
+        closed = m.get("closed", True) is not False
+        shut = c.user.setdefault("dmClosed", {})
+        if closed:
+            shut[other] = int(time.time() * 1000)
+            msgs = self.dms.get(self._dm_key(c.id, other)) or []
+            last = max((msg["id"] for msg in msgs if msg["uid"] == other), default=0)
+            if last > c.user["read"].get(other, 0):
+                c.user["read"][other] = last
+        elif shut.pop(other, None) is None:
+            return
+        self._save_users()
+        for x in self.conns(c.id):
+            x.send({"type": "dm-closed", "id": other, "closed": closed})
 
     def on_dm_read(self, c, m):
         other, upto = m.get("with"), m.get("id")
