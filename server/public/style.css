@@ -192,6 +192,7 @@ a { color: var(--accent); }
 .invite-join:disabled { opacity: .6; cursor: default; }
 .ban-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .passkey-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.passkey-link-title { margin: 6px 0 0; font-size: 22px; }   /* the page a passkey link opens in the browser */
 .set-passkeys #passkeyAdd { justify-self: start; }
 .passkey-row .icon svg { width: 18px; height: 18px; color: var(--dim); }
 .passkey-text { display: grid; flex: 1; min-width: 0; gap: 2px; }   /* the name, and when it was added and used under it */

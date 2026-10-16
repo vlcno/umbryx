@@ -1050,6 +1050,7 @@ class Hub:
         self.embed_lookups = {}   # (kind, id) -> the lookup under way, shared by everyone asking meanwhile
         self.passkey_asks = {}    # challenge -> {"exp", "rp", "kind", "uid"}: passkey requests waiting for an answer
         self.passkey_ips = {}     # ip -> when it last asked for a passkey sign-in challenge
+        self.passkey_links = {}   # token -> {"uid", "exp"}: one-time links to add a passkey in a web browser
         self.push_auth = None     # (Apple provider token, made at, (team, key id)) for push notifications
         self.push_warned = False
         self._load_users()
@@ -1071,7 +1072,7 @@ class Hub:
             "server-mute": self.on_server_mute, "server-deafen": self.on_server_deafen,
             "ban": self.on_ban, "unban": self.on_unban, "bans": self.on_bans, "invite-info": self.on_invite_info,
             "passkey-begin": self.on_passkey_begin, "passkey-finish": self.on_passkey_finish,
-            "passkey-remove": self.on_passkey_remove, "push-token": self.on_push_token, "app-state": self.on_app_state,
+            "passkey-remove": self.on_passkey_remove, "passkey-link": self.on_passkey_link, "push-token": self.on_push_token, "app-state": self.on_app_state,
             "friend-add": self.on_friend_add, "friend-accept": self.on_friend_accept,
             "friend-remove": self.on_friend_remove,
             "voice-join": self.on_voice_join, "voice-leave": self.on_voice_leave, "voice-flags": self.on_voice_flags,
@@ -1628,42 +1629,70 @@ class Hub:
 
     def on_passkey_begin(self, c, m):
         """Settings asks to add a passkey: what the device needs to make one for this account."""
-        domain = self.passkey_domain(c.host)
-        challenge = domain and self.passkey_challenge(domain, "create", c.id)
+        options = self._passkey_options(c.user, self.passkey_domain(c.host))
+        c.send({"type": "passkey-options", **({"options": options} if options else {"error": "Passkeys don't work at this address."})})
+
+    def _passkey_options(self, rec, domain):
+        """What a device needs to make a passkey for rec (with a new challenge), or None."""
+        challenge = domain and self.passkey_challenge(domain, "create", rec["id"])
         if not challenge:
-            c.send({"type": "passkey-options", "error": "Passkeys don't work at this address."})
-            return
-        rec = c.user
-        c.send({"type": "passkey-options", "options": {
+            return None
+        return {
             "rp": {"id": domain, "name": "Umbryx"},
             "user": {"id": passkeys.b64url(rec["id"].encode()), "name": rec["name"], "displayName": rec.get("display") or rec["name"]},
             "challenge": challenge, "timeout": 120000, "attestation": "none",
             "pubKeyCredParams": [{"type": "public-key", "alg": passkeys.ES256}, {"type": "public-key", "alg": passkeys.RS256}],
             "authenticatorSelection": {"residentKey": "required", "requireResidentKey": True, "userVerification": "preferred"},
             "excludeCredentials": [{"type": "public-key", "id": p["id"]} for p in rec.get("passkeys", [])],
-        }})
+        }
 
     def on_passkey_finish(self, c, m):
+        problem = self._passkey_add(c.user, m)
+        if problem:
+            c.send({"type": "error", "code": "passkey", "message": problem})
+
+    def _passkey_add(self, rec, m):
+        """Keeps the passkey a device made for rec (passkey-finish, or the browser link); tells rec's devices. Returns
+        what went wrong, or None."""
         cred, parts, ask = self._passkey_answer(m, "create")
-        if not ask or ask["uid"] != c.id:
-            c.send({"type": "error", "code": "passkey", "message": "That took too long. Try adding the passkey again."})
-            return
+        if not ask or ask["uid"] != rec["id"]:
+            return "That took too long. Try adding the passkey again."
         try:
             made = passkeys.verify_registration(parts["clientDataJSON"], parts["attestationObject"], ask["challenge"],
                                                 ask["rp"], self._passkey_origin_ok(ask["rp"]))
         except (ValueError, IndexError, KeyError, TypeError) as err:
-            c.send({"type": "error", "code": "passkey", "message": "The passkey wasn't added: %s." % err})
-            return
+            return "The passkey wasn't added: %s." % err
         if any(p["id"] == made["id"] for r in self.users.values() for p in r.get("passkeys", [])):
-            c.send({"type": "error", "code": "passkey", "message": "That passkey is on an account already."})
-            return
+            return "That passkey is on an account already."
         name = clean_text(m.get("name"), 40) or "Passkey"
-        kept = c.user.setdefault("passkeys", [])
+        kept = rec.setdefault("passkeys", [])
         kept.append({**made, "rp": ask["rp"], "name": name, "created": int(time.time() * 1000), "used": 0})
         del kept[:-10]
         self._save_users()
-        log("%s added a passkey (%s)" % (c.name, name))
-        self.send_to(c.id, {"type": "passkeys", "passkeys": self._passkey_list(c.user), "added": made["id"]})
+        log("%s added a passkey (%s)" % (rec["name"], name))
+        self.send_to(rec["id"], {"type": "passkeys", "passkeys": self._passkey_list(rec), "added": made["id"]})
+        return None
+
+    def _passkey_link_domain(self, c):
+        """The passkey domain a browser link from this connection would use: the apps' address's, else this address's."""
+        address = app_address(self.cfg)
+        return (self.passkey_domain(urlsplit(address).hostname or "") if address else "") or self.passkey_domain(c.host)
+
+    def on_passkey_link(self, c, m):
+        """A one-time link to add a passkey to this account in a web browser (for an app that can't make one itself):
+        good for 10 minutes. The page builds the address; the token goes after "#", so it's never in a request line."""
+        if not self._passkey_link_domain(c):
+            c.send({"type": "passkey-link", "error": "Passkeys aren't set up on this server."})
+            return
+        now = time.time()
+        for token in [t for t, link in self.passkey_links.items() if link["exp"] < now]:
+            del self.passkey_links[token]
+        if len(self.passkey_links) >= 1000:
+            c.send({"type": "passkey-link", "error": "Too many passkey links waiting. Try again in a few minutes."})
+            return
+        token = secrets.token_urlsafe(24)
+        self.passkey_links[token] = {"uid": c.id, "exp": now + 600}
+        c.send({"type": "passkey-link", "token": token})
 
     def on_passkey_remove(self, c, m):
         kept = c.user.get("passkeys", [])
@@ -2144,6 +2173,7 @@ class Hub:
             "appAddress": app_address(self.cfg),   # where desktop apps should reach this server (see the page's offerMove)
             # This account's passkeys, and the domain passkeys belong to on this address ("" where they do not work).
             "passkeys": self._passkey_list(rec), "passkeyDomain": self.passkey_domain(c.host),
+            "passkeyLink": bool(self._passkey_link_domain(c)),   # a passkey can be added in a browser (passkey-link)
             "push": bool(self._push_ready()),      # whether the iPhone app can have push notifications here
             "canManage": self.can_manage(rec), "build": page_build(),
             "iceServers": self.cfg["iceServers"], "maxUploadMB": self.cfg["maxUploadMB"],
@@ -3184,6 +3214,37 @@ async def handle_forget(hub, req, reader, writer):
     await respond_json(writer, 200, {})
 
 
+async def handle_passkey_link(hub, req, reader, writer, step):
+    """The page a passkey link opens in a web browser (see Hub.on_passkey_link): "options" for making the passkey
+    here, then "finish" with what the device made. The token (from the link) is the only key, used up on success."""
+    body = {}
+    with contextlib.suppress(ValueError, asyncio.IncompleteReadError, asyncio.TimeoutError):
+        length = int(req.headers.get("content-length", "0"))
+        if 0 < length <= 64 * 1024:
+            body = json.loads(await asyncio.wait_for(reader.readexactly(length), 10))
+    body = body if isinstance(body, dict) else {}
+    ip = req.headers["x-forwarded-for"].split(",")[0].strip() if hub.cfg.get("trustProxy") and req.headers.get("x-forwarded-for") \
+        else (writer.get_extra_info("peername") or ("?",))[0]
+    asked = hub.passkey_ips.setdefault(ip, deque(maxlen=30))
+    if len(asked) == asked.maxlen and time.time() - asked[0] < 60:
+        return await respond_json(writer, 429, {"error": "Too many tries. Wait a minute."})
+    asked.append(time.time())
+    link = hub.passkey_links.get(str(body.get("token") or ""))
+    rec = hub.users.get(link["uid"]) if link and link["exp"] > time.time() else None
+    if not rec or rec.get("deleted"):
+        return await respond_json(writer, 404, {"error": "This link has expired. Start again from Settings in Umbryx."})
+    if step == "options":
+        options = hub._passkey_options(rec, hub.passkey_domain(bare_host(req.headers.get("x-forwarded-host") or req.headers.get("host"))))
+        if not options:
+            return await respond_json(writer, 404, {"error": "Passkeys don't work at this address."})
+        return await respond_json(writer, 200, {"options": options})
+    problem = hub._passkey_add(rec, body)
+    if problem:
+        return await respond_json(writer, 400, {"error": problem})
+    hub.passkey_links.pop(str(body.get("token")), None)
+    return await respond_json(writer, 200, {"ok": True, "name": rec["name"]})
+
+
 async def handle_http(hub, req, reader, writer):
     path = unquote(urlsplit(req.target).path)
     if req.method in ("GET", "HEAD"):
@@ -3241,6 +3302,8 @@ async def handle_http(hub, req, reader, writer):
         return await handle_upload(hub, req, reader, writer)
     if req.method == "POST" and path == "/api/forget":
         return await handle_forget(hub, req, reader, writer)
+    if req.method == "POST" and path in ("/api/passkey/link-options", "/api/passkey/link-finish"):
+        return await handle_passkey_link(hub, req, reader, writer, path.rsplit("-", 1)[1])
     if req.method == "PUT" and path.startswith("/updates/") and UPDATE_FILE.match(path[len("/updates/"):]):
         return await handle_publish(hub, req, reader, writer, path[len("/updates/"):])
     await respond(writer, 405, "Method not allowed")

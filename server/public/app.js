@@ -892,6 +892,7 @@ const handlers = {
     state.appAddress = m.appAddress || '';   // where invite links point (see inviteLink)
     state.passkeys = Array.isArray(m.passkeys) ? m.passkeys : [];
     state.passkeyDomain = m.passkeyDomain || '';
+    state.passkeyLink = !!m.passkeyLink;
     stopPasskeyWait();
     checkBuild(m.build);
     showServerLook(m);
@@ -1057,6 +1058,9 @@ const handlers = {
   // Options for adding a passkey (Settings, see askPasskeyMake), and this account's passkeys.
   'passkey-options'(m) {
     passkeyMake = m.error ? null : m.options || null;
+  },
+  'passkey-link'(m) {
+    passkeyLinkToken = m.error ? null : m.token || null;
   },
   passkeys(m) {
     state.passkeys = Array.isArray(m.passkeys) ? m.passkeys : [];
@@ -1479,6 +1483,13 @@ function toB64url(buffer) {
 // the Mac desktop app: macOS lets only apps Apple has signed use passkeys (Safari has them).
 const passkeysCan = () => !!window.PublicKeyCredential && !(appShell && appShell.platform === 'darwin');
 const passkeysHere = () => passkeysCan() && !!(state.info && state.info.passkeys);
+// Whether this device has its own passkey maker (Windows Hello, Touch ID...). The desktop app without one (the Mac
+// app, a PC without Windows Hello) adds passkeys in the web browser instead (passkeyByBrowser).
+let platformPasskeys = false;
+if (window.PublicKeyCredential && PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) {
+  PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().then((yes) => { platformPasskeys = !!yes; }).catch(() => {});
+}
+const passkeyByBrowser = () => !!appShell && !!state.passkeyLink && !(passkeysCan() && platformPasskeys && state.passkeyDomain);
 
 // Signing in with a passkey. The challenge is fetched as the sign-in screen shows, so the passkey prompt follows a
 // click at once (Safari wants that); where the browser can, the passkeys also wait in the username box's
@@ -1543,9 +1554,12 @@ $('#loginPasskey').addEventListener('click', async () => {
 // Settings: this account's passkeys, Add a passkey (with options asked for as Settings opens, for the same reason as
 // above), and remove.
 let passkeyMake = null;
+let passkeyLinkToken = null;   // a one-time link to add a passkey in the web browser (passkeyByBrowser)
 function askPasskeyMake() {
   passkeyMake = null;
-  if (passkeysCan() && state.passkeyDomain) send({ type: 'passkey-begin' });
+  passkeyLinkToken = null;
+  if (passkeyByBrowser()) send({ type: 'passkey-link' });
+  else if (passkeysCan() && state.passkeyDomain) send({ type: 'passkey-begin' });
 }
 function deviceName() {
   const ua = navigator.userAgent;
@@ -1555,8 +1569,9 @@ function deviceName() {
 }
 function renderPasskeys() {
   const box = $('#setPasskeys');
-  box.hidden = !(passkeysCan() && state.passkeyDomain);
+  box.hidden = !((passkeysCan() && state.passkeyDomain) || passkeyByBrowser());
   if (box.hidden) return;
+  $('#passkeyBrowserNote').hidden = !passkeyByBrowser();
   const day = (ms) => (ms ? new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : 'never');
   const list = state.passkeys || [];
   $('#passkeyList').replaceChildren(...(list.length ? list.map((p) => h('div', { class: 'invite-row passkey-row' },
@@ -1569,6 +1584,14 @@ function renderPasskeys() {
     : [h('div', { class: 'chan-empty', text: 'No passkeys yet.' })]));
 }
 $('#passkeyAdd').addEventListener('click', async () => {
+  if (passkeyByBrowser()) {
+    const token = passkeyLinkToken;
+    if (!token) { toast('One moment, then try again.'); askPasskeyMake(); return; }
+    window.open(`${(state.appAddress || location.origin).replace(/\/+$/, '')}/#passkey-add=${token}`);   // the desktop app opens it in the browser
+    toast('Finish in your web browser. Your new passkey shows up here once it\'s made.', 8000);
+    askPasskeyMake();
+    return;
+  }
   const options = passkeyMake;
   if (!options) { toast('One moment, then try again.'); askPasskeyMake(); return; }
   passkeyMake = null;
@@ -1733,7 +1756,56 @@ fetch('/build-cost.json', { cache: 'no-store' }).then((r) => r.json()).then((c) 
   $('#buildCost').hidden = false;
 }).catch(() => {});
 
+// A passkey link (#passkey-add=token, from Settings in a desktop app that can't make passkeys itself): this page only
+// makes one passkey for that account, then says to go back to the app. The options are fetched first so the
+// passkey prompt follows the click at once (Safari wants that).
+async function passkeyLinkPage(token) {
+  history.replaceState(null, '', '/');
+  $('#login').hidden = true;
+  $('#app').hidden = true;
+  const status = h('p', { class: 'login-sub', text: 'Getting ready…' });
+  const go = h('button', { class: 'btn primary', type: 'button', disabled: true }, 'Add passkey');
+  const title = h('h1', { class: 'passkey-link-title', text: 'Add a passkey' });
+  const card = h('div', { class: 'login-card passkey-link-card' }, h('img', { src: '/icon.svg', alt: '', width: 56, height: 56 }), title, status, go);
+  document.body.append(h('div', { class: 'login passkey-link-page' }, card));
+  const post = async (step, data) => {
+    const res = await fetch(`/api/passkey/link-${step}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, ...data }) });
+    const answer = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(answer.error || 'Something went wrong.');
+    return answer;
+  };
+  let options = null;
+  const ready = async () => {
+    options = (await post('options')).options;
+    status.textContent = `For your Umbryx account, ${options.user.name}. Your device will ask for your face, fingerprint or PIN.`;
+    go.disabled = false;
+  };
+  try {
+    if (!window.PublicKeyCredential) throw new Error("This browser can't make passkeys. Try Safari, Chrome or Edge.");
+    await ready();
+  } catch (err) { status.textContent = err.message; return; }
+  go.addEventListener('click', async () => {
+    go.disabled = true;
+    try {
+      const cred = await navigator.credentials.create({ publicKey: { ...options, challenge: fromB64url(options.challenge),
+        user: { ...options.user, id: fromB64url(options.user.id) },
+        excludeCredentials: (options.excludeCredentials || []).map((c) => ({ ...c, id: fromB64url(c.id) })) } });
+      await post('finish', { name: deviceName(),
+        credential: { id: cred.id, type: cred.type, response: { clientDataJSON: toB64url(cred.response.clientDataJSON), attestationObject: toB64url(cred.response.attestationObject) } } });
+      title.textContent = 'Passkey added';
+      status.textContent = 'You can close this tab and go back to Umbryx. Next time, sign in with your face, fingerprint or PIN.';
+      go.remove();
+    } catch (err) {
+      const cancelled = err && (err.name === 'NotAllowedError' || err.name === 'AbortError');
+      status.textContent = cancelled ? 'Cancelled. Click Add passkey to try again.' : err.name === 'InvalidStateError' ? 'This device already has a passkey for your account.' : err.message;
+      try { if (!cancelled) return; await ready(); } catch (again) { status.textContent = again.message; }
+    }
+  });
+}
+
 async function boot() {
+  const handoff = location.hash.match(/^#passkey-add=([A-Za-z0-9_-]{16,64})$/);
+  if (handoff) { passkeyLinkPage(handoff[1]); return; }
   try {
     state.info = await (await fetch('/api/info')).json();
   } catch { /* the sign-in screen still works with defaults */ }
