@@ -1238,7 +1238,8 @@ const handlers = {
     const viewing = receive(msg.channel, msg);
     const mention = msg.uid !== state.me.id && mentionsMe(msg.text);
     if (mention && (!viewing || outOfSight()) && !isDnd(self())) blip('message');
-    if (!viewing) {
+    if (typeof msg.join === 'number') { /* someone joined: shown, never counted as unread */ }
+    else if (!viewing) {
       state.unread.set(msg.channel, (state.unread.get(msg.channel) || 0) + 1);
       if (mention) state.mentions.set(msg.channel, (state.mentions.get(msg.channel) || 0) + 1);
       renderSidebar();
