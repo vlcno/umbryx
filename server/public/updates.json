@@ -23,7 +23,8 @@
         "Close a direct message with the ✕ on its row: it leaves your list until one of you writes again.",
         "Admins can server mute, server deafen and ban people from the menu on their name; Server settings lists the bans.",
         "Post an invite link in a chat and it shows a card with the server and a Join button, like Discord.",
-        "Passkeys: sign in with your face, fingerprint or PIN. Add one in Settings, under Profile."
+        "Passkeys: sign in with your face, fingerprint or PIN. Add one in Settings, under Profile.",
+        "Skip for now is gone: everyone makes an account. An invite code is still optional."
       ],
       "fixed": [
         "Chats stay at the newest message instead of drifting up.",

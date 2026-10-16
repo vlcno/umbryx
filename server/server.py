@@ -56,10 +56,6 @@ DEFAULTS = {
     "badges": {},
     # Every account made while this is on gets the Early Supporter badge, and keeps it after it is turned off.
     "earlySupporters": True,
-    # "Skip for now" on the sign-in screen: an account without a password, kept by that one device. Guests see none
-    # of the server (its channels, members or messages), only the friends they add by username, whom alone they can
-    # message and call. Where the server has a password, guests need it too.
-    "guests": True,
     # New accounts start in direct messages, like guests with a password, until they have an invite code: one typed
     # when making the account, or later. Admins make the codes (Server settings). False: accounts join straight away.
     "inviteOnly": True,
@@ -193,7 +189,6 @@ def device_of(agent):
     return "mobile" if "CFNetwork" in agent or "Darwin/" in agent else "web"
 # What a guest may not do: everything to do with the server's channels, and changing the server.
 GUEST_BARRED = {"chat", "history", "server-update", "emoji-add", "emoji-remove", "channel-create", "channel-delete", "channel-rename"}
-GUESTS_PER_IP = 10   # guest accounts made from one address in ten minutes
 GUEST_BARRED_WHY = {"emoji-add": "Custom emoji belong to the server: you can add them once you are in it."}
 INVITE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"   # no 0/O, 1/I/L: codes are read out and typed
 INVITE_USES = (1, 5, 25, 0)    # 0: no limit
@@ -1041,7 +1036,6 @@ class Hub:
             saved = json.loads((DATA / "emojis.json").read_text("utf-8"))
             self.emojis = [e for e in saved if isinstance(e, dict) and e.get("name") and e.get("url")]
         self.auth_fails = {}   # ip -> recent failed sign-ins
-        self.guests_made = {}  # ip -> when guest accounts were made from there lately
         self.invites = []      # invite codes: {"code", "by", "created", "expires", "max", "uses", "joined"}
         with contextlib.suppress(OSError, ValueError):
             saved = json.loads((DATA / "invites.json").read_text("utf-8"))
@@ -1059,6 +1053,15 @@ class Hub:
         self.dms = {path.stem: self._load_lines(path) for path in DMS.glob("*.jsonl")}
         everything = list(self.messages.values()) + list(self.dms.values())
         self.seq = max((m["id"] for msgs in everything for m in msgs), default=0)
+        # Once, when config.json asks ("removeGuests", set by setup/remove_guests_setup.py): the "Skip for now" guest
+        # accounts left over (no password; nobody can make one any more) are deleted like any account.
+        if self.cfg.get("removeGuests"):
+            gone = [r for r in list(self.users.values()) if r.get("guest") and not r.get("hash") and not r.get("deleted")]
+            for rec in gone:
+                self._delete_account(rec, rec)
+            self.cfg["removeGuests"] = False
+            save_config(self.cfg)
+            log("removed %d Skip for now guest account%s" % (len(gone), "" if len(gone) == 1 else "s"))
         self.handlers = {
             "auth": self.on_auth, "logout": self.on_logout, "profile": self.on_profile,
             "status": self.on_status, "note": self.on_note, "dm-ping": self.on_dm_ping, "echo": self.on_echo,
@@ -1450,22 +1453,8 @@ class Hub:
         elif mode == "passkey":
             rec = self._passkey_sign_in(c, m)
         elif mode == "guest":
-            # "Skip for now": an account without a password, which only this device's session token opens.
-            if not self.cfg.get("guests", True):
-                self._auth_error(c, "no-guests", "This server does not take guests. Make an account to use it.")
-            gate = str(self.cfg.get("password") or "")
-            if gate and not hmac.compare_digest(str(m.get("serverPassword") or "").encode("utf-8"), gate.encode("utf-8")):
-                self._auth_error(c, "bad-server-password", "That server password is not right.", count=True)
-            made = self.guests_made.setdefault(c.ip, deque(maxlen=GUESTS_PER_IP))
-            if len(made) == made.maxlen and time.time() - made[0] < 600:
-                self._auth_error(c, "guest-wait", "Too many guests from here lately. Wait a few minutes and try again.")
-            made.append(time.time())
-            rec = {"id": secrets.token_hex(6), "name": self._guest_name(), "salt": "", "hash": "", "guest": True,
-                   "avatar": "", "banner": "", "about": "", "friends": [], "incoming": [], "outgoing": [],
-                   "read": {}, "created": int(time.time()), "early": False}
-            self.users[rec["id"]] = rec
-            self.names[rec["name"].casefold()] = rec
-            log("a guest came in as %s" % rec["name"])
+            # "Skip for now" (an account without a password) is gone: older apps that still offer it are told so.
+            self._auth_error(c, "no-guests", "Skip for now is gone: make an account. An invite code is optional.")
         else:
             return
         if mode != "resume":
@@ -1479,14 +1468,6 @@ class Hub:
         if m.get("client") in DEVICES:   # what it is, said by itself (newer pages and phone apps)
             c.device = m["client"]
         self._sign_in(c, rec, session)
-
-    def _guest_name(self):
-        """guest-4821: a free name for a new guest (who can change it like anyone)."""
-        for digits in (4, 4, 4, 4, 6, 6, 6, 8):
-            name = "guest-" + "".join(secrets.choice("0123456789") for _ in range(digits))
-            if name not in self.names:
-                return name
-        return "guest-" + secrets.token_hex(6)
 
     def on_claim(self, c, m):
         """A guest makes theirs an account: a username and password, so they can sign in on any device. They stay a
@@ -3253,7 +3234,7 @@ async def handle_http(hub, req, reader, writer):
                 # Anyone can ask this, before signing in (the address may be public): the server's own name and
                 # picture are only for those signed in, in the welcome.
                 "serverName": "Umbryx", "serverIcon": "", "build": page_build(),
-                "passwordRequired": bool(hub.cfg.get("password")), "guests": bool(hub.cfg.get("guests", True)),
+                "passwordRequired": bool(hub.cfg.get("password")), "guests": False,   # "Skip for now" is gone
                 "inviteOnly": bool(hub.cfg.get("inviteOnly", True)),
                 "httpsPort": hub.https_port,
                 # Where the desktop app should reach this server, and the certificate it may know it by already

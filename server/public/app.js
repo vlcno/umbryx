@@ -1655,7 +1655,6 @@ function showLogin(error) {
   $('#loginAuto').hidden = !quick;
   $('#loginAuto').textContent = 'Continue as ' + quick;
   $('#loginForget').hidden = !remembered;
-  $('#loginGuest').hidden = !state.info.guests;
   preparePasskeys();
   // Came from an invite link without being signed in: Create account, with the code in.
   if (linkInvite && !linkShown && state.info.inviteOnly) {
@@ -1673,22 +1672,6 @@ function showLogin(error) {
   if (railShell && railShell.signedIn) railShell.signedIn(false);
   ($('#loginName').value ? $('#loginPass') : $('#loginName')).focus();
 }
-
-// "Skip for now": in as a guest, an account without a password that only this device keeps (see the server's on_auth).
-// Guests message and call the friends they add, and can make it a real account later in Settings.
-$('#loginGuest').addEventListener('click', () => {
-  if (state.info.passwordRequired && !$('#loginGate').value) {
-    $('#loginGateRow').hidden = false;
-    $('#loginError').hidden = false;
-    $('#loginError').textContent = 'This server has a password. Type it in, then press Skip for now again.';
-    $('#loginGate').focus();
-    return;
-  }
-  pendingAuth = { mode: 'guest', serverPassword: $('#loginGate').value };
-  keepChoice = true;   // the device is the only key to a guest account
-  $('#loginError').hidden = true;
-  connect();
-});
 
 // On the server computer itself, the server can sign its owner in without a password (autoLogin in config.json).
 function autoSignIn() {
