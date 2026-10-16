@@ -1,12 +1,12 @@
 {
-  "tokens": 1494771829,
-  "usd": 429.06,
-  "requests": 2784,
+  "tokens": 1506292738,
+  "usd": 434.38,
+  "requests": 2828,
   "model": "Claude Opus 5.5",
   "fast": false,
   "plan": "Max 20x $200 a month",
   "models": {
-    "Claude Opus 5.5": 1494771829
+    "Claude Opus 5.5": 1506292738
   },
-  "updated": "2026-10-16T10:58:59-0400"
+  "updated": "2026-10-16T12:18:23-0400"
 }

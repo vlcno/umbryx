@@ -752,8 +752,11 @@ applyTheme(store.get('theme', null));
 // away); in a browser, nothing done on this page. Never while in a voice channel or call, and do-not-disturb
 // stays as it is. With several devices signed in, the server counts you idle only once all of them are.
 const IDLE_AFTER = 20 * 60;   // seconds
+// Sooner, the server hears that nobody is at this computer (away), so notifications go to their phone instead.
+const AWAY_AFTER = 3 * 60;    // seconds
 let lastActive = Date.now();
 let idleSent = false;
+let awaySent = false;
 
 async function checkIdle() {
   if (!state.me || !state.connected) return;
@@ -763,9 +766,11 @@ async function checkIdle() {
   }
   const idle = away >= IDLE_AFTER && !rtc.channel;
   if (idle !== idleSent && send({ type: 'idle', idle })) idleSent = idle;
+  const gone = away >= AWAY_AFTER && !rtc.channel;
+  if (gone !== awaySent && send({ type: 'away', away: gone })) awaySent = gone;
 }
 for (const name of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart']) {
-  window.addEventListener(name, () => { lastActive = Date.now(); if (idleSent) checkIdle(); }, { passive: true, capture: true });
+  window.addEventListener(name, () => { lastActive = Date.now(); if (idleSent || awaySent) checkIdle(); }, { passive: true, capture: true });
 }
 setInterval(checkIdle, 30000);
 
@@ -903,6 +908,9 @@ const handlers = {
     state.channelNotify = m.channelNotify || {};
     state.blocked = new Set(Array.isArray(m.blocked) ? m.blocked : []);
     state.reports = [];
+    state.canModerate = !!m.canModerate;   // sees reports, may delete anyone's channel message (admins and Staff)
+    state.searchHas = !!m.searchHas;       // search can look for pictures, videos, files or links
+    awaySent = false;
     stopPasskeyWait();
     checkBuild(m.build);
     showServerLook(m);
@@ -1103,20 +1111,20 @@ const handlers = {
     if (isConv()) { if (chat.stuck) toBottom(box); else box.scrollTop = y; }
   },
 
-  'report-sent'(m) {
+  reported(m) {
     if ($('#reportDlg').open) $('#reportDlg').close();
     toast(m.again ? "You've already reported that. The server's admins will take a look." : "Thanks for reporting. The server's admins will take a look.", 6000);
   },
 
-  // Open reports, for admins (Server settings > Reports). new: one that just came in.
+  // Open reports, for admins and Staff (the flag by the server's name). new: one that just came in.
   reports(m) {
     const first = !state.reportsHeard;
     state.reportsHeard = true;
     state.reports = Array.isArray(m.reports) ? m.reports : [];
     renderReports();
     const fresh = m.new && state.reports.find((r) => r.id === m.new);
-    if (fresh) toast(`New report: ${fresh.byName} reported ${fresh.userName} (${REPORT_REASONS[fresh.reason] || 'other'}). See Server settings.`, 8000);
-    else if (first && state.reports.length) toast(`${state.reports.length === 1 ? 'There is 1 open report' : `There are ${state.reports.length} open reports`} in Server settings.`, 6000);
+    if (fresh) toast(`New report: ${fresh.byName} reported ${fresh.userName} (${reasonLabel(fresh.reason)}). See Reports, the flag by the server's name.`, 8000);
+    else if (first && state.reports.length) toast(`${state.reports.length === 1 ? 'There is 1 open report' : `There are ${state.reports.length} open reports`}: see the flag by the server's name.`, 6000);
   },
 
   // Who is banned, for admins (Server settings > Bans, and Unban in their menu).
@@ -3117,7 +3125,7 @@ function messageEl(m, prev, bare) {
     action('pin', m.pinned ? 'Unpin' : 'Pin', () => pinMessage(m, !m.pinned), m.pinned ? 'on' : ''),
     mine ? action('pencil', 'Edit', () => startEdit(m)) : null,
     !mine && who.id && !who.deleted ? action('flag', 'Report', () => openReport(who, m)) : null,
-    mine || (state.canManage && m.channel) ? action('trash', 'Delete', () => deleteMessage(m), 'danger') : null);
+    mine || (state.canModerate && m.channel) ? action('trash', 'Delete', () => deleteMessage(m), 'danger') : null);
   const mentioned = !bare && !mine && !!m.text && mentionsMe(m.text);
   const row = { class: 'msg' + (compact ? ' compact' : '') + (editing ? ' editing' : '') + (mentioned ? ' mentioned' : ''), dataset: { id: m.id } };
   let el;
@@ -3477,6 +3485,7 @@ function showServerLook(m) {
   $('#serverHead').classList.toggle('has-banner', !!state.server.banner);
   banner.replaceChildren(...(state.server.banner ? [h('img', { src: state.server.banner, alt: '' })] : []));
   $('#serverEdit').hidden = !state.canManage;
+  $('#reportsBtn').hidden = !state.canModerate;
   $('#serverPartner').hidden = !m.serverPartner;
   if (railShell && railShell.server) railShell.server({ icon: state.server.icon ? location.origin + state.server.icon : '', partner: !!m.serverPartner });
   updateTitle();
@@ -3496,8 +3505,6 @@ function openServerSettings() {
   if (state.info.inviteOnly) { renderInvites(); send({ type: 'invites' }); }
   renderBans();
   send({ type: 'bans' });
-  renderReports();
-  send({ type: 'reports' });
   $('#serverDlg').showModal();
 }
 
@@ -3556,6 +3563,13 @@ async function pickServerImage(kind, file) {
 }
 
 $('#serverEdit').replaceChildren(icon('pencil'));
+$('#reportsBtn').replaceChildren(icon('flag'));
+$('#reportsBtn').addEventListener('click', () => {
+  if (!state.canModerate) return;
+  renderReports();
+  send({ type: 'reports' });
+  $('#reportsDlg').showModal();
+});
 $('#serverEdit').addEventListener('click', openServerSettings);
 $('#srvIconBtn').addEventListener('click', () => $('#srvIconFile').click());
 $('#srvBannerBtn').addEventListener('click', () => $('#srvBannerFile').click());
@@ -3581,30 +3595,37 @@ $('#serverForm').addEventListener('submit', (event) => {
 // picking a person from the list that from: brings up) finds only theirs. Results open in a panel on the right,
 // newest first, with how many each person wrote; clicking a person narrows the results to them, and clicking a
 // message goes to it.
-const search = { seq: 0, words: '', from: null, last: null };
+const search = { seq: 0, words: '', from: null, has: null, last: null };
+// What a search can ask for besides words (has:image and so on, or the buttons under the box and in the results).
+const SEARCH_HAS = { image: 'Images', video: 'Videos', file: 'Files', link: 'Links' };
 const searchInput = $('#searchInput');
 const searchList = h('div', { class: 'mention-list search-list', role: 'listbox', 'aria-label': 'People', hidden: true });
 $('#searchBox').append(searchList);
 let searchPick = { items: [], index: 0, start: -1 };
 
-// "from:Abby hello" -> { from: Abby's id, words: 'hello' }. A name with spaces is written from:"Abby Lee".
+// "from:Abby has:image hello" -> { from: Abby's id, has: 'image', words: 'hello' }. A name with spaces is written
+// from:"Abby Lee". Words match whole words; hel* finds words starting with hel.
 function parseSearch(text) {
   let from = null;
+  let has = null;
   const words = text.replace(/from:(?:"([^"]+)"|(\S+))/i, (_, quoted, plain) => {
     const user = userNamed(quoted || plain);
     if (user) from = user.id;
     return ' ';
-  }).replace(/\s+/g, ' ').trim();
-  return { from, words };
+  }).replace(/has:(image|video|file|link)s?\b/i, (_, kind) => { has = kind.toLowerCase(); return ' '; }).replace(/\s+/g, ' ').trim();
+  return { from, has, words };
 }
 
-function runSearch(from) {
+// from and has: undefined keeps what the box says (and, while results are open, the filter picked there).
+function runSearch(from, has) {
   const parsed = parseSearch(searchInput.value);
   search.words = parsed.words;
   search.from = from === undefined ? parsed.from : from;
-  if (!search.words && !search.from) { closeResults(); return; }
+  search.has = has !== undefined ? has : parsed.has || ($('#results').hidden ? null : search.has);
+  if (!state.searchHas) search.has = null;
+  if (!search.words && !search.from && !search.has) { closeResults(); return; }
   search.seq++;
-  send({ type: 'search', q: search.words, from: search.from, seq: search.seq });
+  send({ type: 'search', q: search.words, from: search.from, ...(search.has ? { has: search.has } : {}), seq: search.seq });
   $('#results').replaceChildren(h('div', { class: 'results-empty', text: 'Searching…' }));
   openResults();
 }
@@ -3624,7 +3645,8 @@ function renderResults(m) {
   search.last = m;
   const panel = $('#results');
   const who = search.from ? state.users.get(search.from) : null;
-  const what = [search.words ? `“${search.words}”` : '', who ? `from ${nick(who)}` : ''].filter(Boolean).join(' ');
+  const what = [search.words ? `“${search.words}”` : '', who ? `from ${nick(who)}` : '',
+    search.has ? `with ${SEARCH_HAS[search.has].toLowerCase()}` : ''].filter(Boolean).join(' ');
   const head = h('div', { class: 'results-head' },
     h('div', { class: 'results-title' }, h('b', { text: m.total === 1 ? '1 result' : `${m.total} results` }), h('span', { text: what })),
     h('button', { class: 'ctl', type: 'button', title: 'Close the search', onclick: () => { searchInput.value = ''; closeResults(); } }, icon('x')));
@@ -3634,11 +3656,15 @@ function renderResults(m) {
   const chip = (label, count, active, run, user) => h('button', { class: 'result-person' + (active ? ' active' : ''), type: 'button', onclick: run },
     user ? avatar(user, 'xs') : null, h('span', { class: 'result-person-name', text: label }), h('span', { class: 'result-count', text: String(count) }));
   const facets = people.length > 1 || search.from ? h('div', { class: 'result-people' },
-    chip('Everyone', total, !search.from, () => runSearch(null)),
+    chip('Everyone', total, !search.from, () => runSearch(null, search.has)),
     people.map(([id, n]) => {
       const user = state.users.get(id) || { id, name: 'Someone' };
-      return chip(nick(user), n, search.from === id, () => runSearch(search.from === id ? null : id), user);
+      return chip(nick(user), n, search.from === id, () => runSearch(search.from === id ? null : id, search.has), user);
     })) : null;
+  // Only messages with a picture, a video, another file or a link (picking the one on again takes it off).
+  const filters = state.searchHas ? h('div', { class: 'result-people result-has' },
+    Object.entries(SEARCH_HAS).map(([kind, label]) => h('button', { class: 'result-person' + (search.has === kind ? ' active' : ''), type: 'button',
+      onclick: () => runSearch(search.from, search.has === kind ? null : kind) }, h('span', { class: 'result-person-name', text: label })))) : null;
   const items = m.results.map((msg) => {
     const where = msg.dm ? { dm: msg.dm } : { channel: msg.channel };
     const place = msg.dm ? `@${(state.users.get(msg.dm) || { name: 'someone' }).name}` : `#${(channelById(msg.channel) || { name: 'channel' }).name}`;
@@ -3647,7 +3673,7 @@ function renderResults(m) {
       messageEl(msg, null, true));
   });
   const more = m.total > m.results.length ? h('div', { class: 'results-empty', text: `Showing the newest ${m.results.length}. Add words to narrow it down.` }) : null;
-  panel.replaceChildren(head, facets, h('div', { class: 'results-list' },
+  panel.replaceChildren(head, filters, facets, h('div', { class: 'results-list' },
     items.length ? items : h('div', { class: 'results-empty', text: 'No messages match.' }), more));
 }
 
@@ -3656,10 +3682,22 @@ function closeSearchList() {
   searchPick = { items: [], index: 0, start: -1 };
 }
 
+// The empty box, focused: buttons for messages with pictures, videos, files or links, and a word on from:.
+function offerSearchFilters() {
+  if (!state.me || !state.searchHas || searchInput.value.trim() || document.activeElement !== searchInput) return false;
+  searchPick = { items: [], index: 0, start: -1 };
+  searchList.replaceChildren(h('div', { class: 'search-list-head', text: 'Messages with' }),
+    h('div', { class: 'search-has' }, Object.entries(SEARCH_HAS).map(([kind, label]) => h('button', { class: 'result-person', type: 'button',
+      onmousedown: (event) => { event.preventDefault(); closeSearchList(); runSearch(undefined, kind); } }, h('span', { class: 'result-person-name', text: label })))),
+    h('div', { class: 'search-tip', text: 'Type from: to pick a person. Words match whole words; end one with * to match its start.' }));
+  searchList.hidden = false;
+  return true;
+}
+
 function suggestSearchPeople() {
   const before = searchInput.value.slice(0, searchInput.selectionStart);
   const hit = before.match(/(^|\s)from:("?)([^"\s]*)$/i);
-  if (!hit || !state.me) { closeSearchList(); return; }
+  if (!hit || !state.me) { if (!offerSearchFilters()) closeSearchList(); return; }
   const query = hit[3].toLowerCase();
   const items = [...state.users.values()].filter((u) => !u.deleted && u.name.toLowerCase().includes(query))
     .sort((a, b) => (b.name.toLowerCase().startsWith(query) ? 1 : 0) - (a.name.toLowerCase().startsWith(query) ? 1 : 0) || a.name.localeCompare(b.name)).slice(0, 8);
@@ -3687,9 +3725,10 @@ function pickSearchPerson() {
 }
 
 searchInput.addEventListener('input', suggestSearchPeople);
+searchInput.addEventListener('focus', offerSearchFilters);
 searchInput.addEventListener('blur', () => setTimeout(closeSearchList, 120));
 searchInput.addEventListener('keydown', (event) => {
-  if (!searchList.hidden) {
+  if (!searchList.hidden && searchPick.items.length) {
     const count = searchPick.items.length;
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
@@ -4311,7 +4350,10 @@ function personRow(user, acts) {
 function renderFriends() {
   const f = state.friends;
   const root = $('#friendLists');
-  const people = (ids) => ids.map((id) => state.users.get(id)).filter(Boolean);
+  // The Search friends box: by username, display name or the nickname you gave them.
+  const query = $('#friendSearch').value.trim().toLowerCase();
+  const matches = (u) => !query || [u.name, u.display, state.nicknames && state.nicknames.get(u.id)].some((s) => s && s.toLowerCase().includes(query));
+  const people = (ids) => ids.map((id) => state.users.get(id)).filter((u) => u && matches(u));
   const button = (label, run, cls) => h('button', { class: 'btn slim' + (cls ? ' ' + cls : ''), type: 'button', onclick: run }, label);
   const drop = (id) => send({ type: 'friend-remove', id });
   root.replaceChildren();
@@ -4333,7 +4375,7 @@ function renderFriends() {
   if (!f.friends.length && !f.incoming.length && !f.outgoing.length) {
     root.append(h('div', { class: 'empty', text: state.guest ? `No friends yet. Add someone by their username above, or give them yours: ${state.me.name}.`
       : 'No friends yet. Add someone by username above, or click a name in the member list.' }));
-  }
+  } else if (query && !root.childElementCount) root.append(h('div', { class: 'empty', text: `Nobody here matches “${$('#friendSearch').value.trim()}”.` }));
   section('Blocked', people([...(state.blocked || [])]).filter((u) => !u.deleted), (u) => [button('Unblock', () => unblockPerson(u))]);
 }
 
@@ -4373,7 +4415,7 @@ function openReport(user, message) {
 }
 $('#reportForm').addEventListener('submit', (event) => {
   if (!event.submitter || event.submitter.value !== 'send' || !reporting) return;
-  event.preventDefault();   // closes once the server has it (handlers['report-sent'])
+  event.preventDefault();   // closes once the server has it (handlers.reported)
   const picked = $('#reportForm').querySelector('input[name="reportReason"]:checked');
   if (!picked) { toast('Pick why you are reporting.'); return; }
   const { user, message } = reporting;
@@ -4383,13 +4425,13 @@ $('#reportForm').addEventListener('submit', (event) => {
 });
 
 // Admins: the open reports (Server settings > Reports), newest first. A dot on the settings pencil while any are open.
+const reasonLabel = (reason) => REPORT_REASONS[reason] || (reason ? reason[0].toUpperCase() + reason.slice(1) : 'Something else');
 function renderReports() {
   const list = state.reports || [];
-  const pencil = $('#serverEdit');
-  pencil.classList.toggle('alert', !!list.length);
-  pencil.title = list.length ? `Server settings · ${list.length} open report${list.length === 1 ? '' : 's'}` : 'Server settings';
-  $('#srvReports').hidden = !state.canManage;
-  $('#srvReportsHead').textContent = list.length ? `Reports · ${list.length}` : 'Reports';
+  const flag = $('#reportsBtn');
+  flag.classList.toggle('alert', !!list.length);
+  flag.title = list.length ? `Reports · ${list.length} open` : 'Reports';
+  $('#reportsHead').textContent = list.length ? `Reports · ${list.length}` : 'Reports';
   const when = (ms) => new Date(ms).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   const person = (id, name) => {
     const user = state.users.get(id);
@@ -4401,7 +4443,7 @@ function renderReports() {
     const msg = r.message;
     return h('div', { class: 'report-row' },
       h('div', { class: 'report-head' }, person(r.by, r.byName), ' reported ', person(r.user, r.userName),
-        h('span', { class: 'report-why', text: REPORT_REASONS[r.reason] || r.reason })),
+        h('span', { class: 'report-why', text: reasonLabel(r.reason) })),
       h('div', { class: 'invite-meta', text: [msg ? `A message in ${r.where || 'a conversation'}` : 'Their account', when(r.at)].join(' · ') }),
       msg ? h('div', { class: 'report-quote' },
         msg.text ? h('div', { class: 'report-quote-text', text: msg.text }) : null,
@@ -4414,6 +4456,8 @@ function renderReports() {
         h('button', { class: 'btn slim', type: 'button', title: 'Take it off the list, for every admin', onclick: () => send({ type: 'report-close', id: r.id }) }, 'Done')));
   }) : [h('div', { class: 'chan-empty', text: 'No open reports.' })]));
 }
+
+$('#friendSearch').addEventListener('input', renderFriends);
 
 $('#friendForm').addEventListener('submit', (event) => {
   event.preventDefault();

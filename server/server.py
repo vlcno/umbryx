@@ -165,6 +165,9 @@ NOTE_MINUTES = (0, 30, 60, 240, 1440)   # how long a custom status may last; 0 k
 THEME_PRESET = re.compile(r"^[a-z0-9-]{1,24}$")
 BADGES = ("staff", "owner", "early", "partner")   # Umbryx Staff (the people who make it), Server Owner, Early Supporter, Umbryx Partner
 MAX_SEARCH_RESULTS = 60
+SEARCH_WORDS = re.compile(r"[\w']+")         # a message's words, for search (whole words, not pieces of them)
+SEARCH_HAS = ("image", "video", "file", "link")
+LINK_IN_TEXT = re.compile(r"\bhttps?://\S", re.I)
 ACTIVITY_KINDS = (0, 2, 3, 5)   # Discord's: playing, listening to, watching, competing in
 ACTIVITY_SOURCES = ("game", "spotify")
 ACTIVITY_PICTURE = re.compile(r"^(?:https://cdn\.discordapp\.com/app-(?:icons|assets)/\d{5,25}/[A-Za-z0-9_]{1,64}\.png(?:\?size=\d{2,4})?"
@@ -997,6 +1000,7 @@ class Client:
         self.sharing = False
         self.camera = False
         self.idle = False                        # this device has been left alone for a while
+        self.away = False                        # nobody has used it for a few minutes (on_away): pushes reach the phone
         self.device = "web"                      # "desktop", "web" or "mobile" (see device_of and on_auth)
         self.host = ""                           # the address it came to (for passkeys, see Hub.passkey_domain)
         self.background = False                  # the phone app is in the background (app-state): push to it
@@ -1104,7 +1108,7 @@ class Hub:
             "invite-delete": self.on_invite_delete, "account-delete": self.on_account_delete, "kick": self.on_kick,
             "nickname": self.on_nickname,
             "block": self.on_block, "unblock": self.on_unblock, "report": self.on_report, "reports": self.on_reports,
-            "report-close": self.on_report_close,
+            "report-close": self.on_report_close, "report-done": self.on_report_close, "away": self.on_away,
         }
 
     # storage
@@ -1249,6 +1253,13 @@ class Hub:
         if isinstance(admins, list):
             return any(str(a) == rec["id"] or str(a).casefold() == rec["name"].casefold() for a in admins)
         return "owner" in self.badges_of(rec)
+
+    def can_moderate(self, rec):
+        """Who sees and handles reports, and may delete anyone's message in a channel: the server's admins, and
+        Umbryx Staff."""
+        if rec.get("guest") or rec.get("deleted"):
+            return False
+        return self.can_manage(rec) or "staff" in self.badges_of(rec)
 
     def badges_of(self, rec):
         """The badges config.json gives this account, by its id or (in any case) its name."""
@@ -1831,7 +1842,7 @@ class Hub:
         tokens = rec.get("pushTokens")
         if not tokens or rec.get("deleted") or (rec.get("status") == "dnd" and not ping):
             return
-        if any(not x.idle and not x.background for x in self.conns(rec["id"])):
+        if any(not x.idle and not x.background and not x.away for x in self.conns(rec["id"])):
             return
         ready = self._push_ready()
         if not ready:
@@ -2229,10 +2240,12 @@ class Hub:
             # Per channel: "all", "mentions" or "none" (unset: the device's own default; pushes: mentions).
             "channelNotify": rec.get("channelNotify") or {},
             "blocked": rec.get("blocked") or [],   # who this account blocked (see on_block)
+            "canModerate": self.can_moderate(rec),   # sees reports and may delete channel messages (see can_moderate)
+            "searchHas": True,                     # search takes has: image, video, file or link (see on_search)
             "canManage": self.can_manage(rec), "build": page_build(),
             "iceServers": self.cfg["iceServers"], "maxUploadMB": self.cfg["maxUploadMB"],
         })
-        if self.can_manage(rec):
+        if self.can_moderate(rec):
             self._send_reports(c)   # the open reports, so the admin's apps can say there are some
         # Calls that rang while this account was nowhere on, and nobody answered.
         if rec.get("missedCalls"):
@@ -2242,6 +2255,14 @@ class Hub:
         for call in self.calls.values():
             if call["to"] == rec["id"] and not call["active"]:
                 c.send({"type": "call-incoming", "call": call["id"], "with": call["from"]})
+            elif call["from"] == rec["id"] and not call["active"]:
+                # The caller is back (a phone back from the background, say): "Calling..." again, and it can cancel.
+                # A phone takes over from a phone (most likely itself, its old connection not yet timed out).
+                old = call["caller"]
+                if old not in self.conns(rec["id"]) or old.device == c.device == "mobile":
+                    call["caller"] = c
+                c.send({"type": "call-ringing", "call": call["id"], "with": call["to"],
+                        **({} if call["caller"] is c else {"elsewhere": True})})
         if first:
             self.broadcast({"type": "user-join", "user": self.public(rec)}, skip=c)
             log("%s is online%s" % (rec["name"], " (guest)" if guest else ""))
@@ -2381,14 +2402,24 @@ class Hub:
                         "serverPartner": bool(self.cfg.get("serverPartner")),
                         "spotifyClientId": self.cfg.get("spotifyClientId", "")})
 
+    @staticmethod
+    def _has(msg, kind):
+        """Whether a message has a picture, a video, another file, or a link (search's has)."""
+        if kind == "link":
+            return bool(LINK_IN_TEXT.search(msg.get("text") or ""))
+        kinds = [a.get("kind") for a in msg.get("attachments", ())]
+        return any(k not in ("image", "video") for k in kinds) if kind == "file" else kind in kinds
+
     def on_search(self, c, m):
-        """Find messages containing every word given (in their text or a file's name), newest first, optionally
-        only one person's. Looks through every text channel and this account's own direct messages, never
-        anyone else's. authors counts the matches by person whatever the filter, so the app can offer them."""
-        words = clean_text(m.get("q"), 120).casefold().split()[:8]
+        """Find messages with every word given (in their text or a file's name), newest first, optionally only one
+        person's, or only those with a picture, video, file or link (has). Whole words: "hi" doesn't find "this";
+        "hi*" finds words starting with hi. Looks through every text channel and this account's own direct messages,
+        never anyone else's. authors counts the matches by person whatever the from, so the app can offer them."""
+        words = re.findall(r"[\w']+\*?", clean_text(m.get("q"), 120).casefold())[:8]
         author = m.get("from") if isinstance(m.get("from"), str) and m.get("from") in self.users else None
+        has = m.get("has") if m.get("has") in SEARCH_HAS else None
         reply = {"type": "search-results", "seq": m.get("seq"), "results": [], "total": 0, "authors": {}}
-        if not words and not author:
+        if not words and not author and not has:
             c.send(reply)
             return
         places = [(self.messages.get(ch["id"], []), {"channel": ch["id"]}) for ch in self.channels
@@ -2400,9 +2431,12 @@ class Hub:
         found = []
         for msgs, where in places:
             for msg in msgs:
+                if isinstance(msg.get("join"), int) or (has and not self._has(msg, has)):
+                    continue
                 if words:
-                    text = " ".join([msg.get("text") or ""] + [str(x.get("name", "")) for x in msg.get("attachments", ())]).casefold()
-                    if not all(w in text for w in words):
+                    text = " ".join([msg.get("text") or ""] + [str(x.get("name", "")) for x in msg.get("attachments", ())])
+                    present = set(SEARCH_WORDS.findall(text.casefold()))
+                    if not all(any(p.startswith(w[:-1]) for p in present) if w.endswith("*") else w in present for w in words):
                         continue
                 uid = msg.get("uid")
                 reply["authors"][uid] = reply["authors"].get(uid, 0) + 1
@@ -2420,6 +2454,11 @@ class Hub:
         c.idle = bool(m.get("idle"))
         if all(x.idle for x in self.conns(c.id)) != before:
             self.broadcast({"type": "user-update", "user": self.public(c.user)})
+
+    def on_away(self, c, m):
+        """A computer says nobody has used it for a few minutes (away: true), or that someone is back. While every
+        device of an account is away, idle, or a phone in the background, pushes reach the phone (see notify)."""
+        c.away = bool(m.get("away"))
 
     def on_activity(self, c, m):
         """A desktop app says what its person is playing now (a game, Spotify, or nothing)."""
@@ -2602,6 +2641,9 @@ class Hub:
         """Block someone: no more direct messages, calls, pings or friend requests either way, and you are no longer
         friends (requests either way go too). The apps hide their channel messages behind "Blocked message", and their
         @mentions and replies don't notify you. Your direct messages so far stay readable. They aren't told."""
+        if m.get("blocked") is False:   # the iPhone app's way to unblock
+            self.on_unblock(c, m)
+            return
         me, target = c.user, self.users.get(m.get("id"))
         if not target or target is me or target.get("deleted"):
             return
@@ -2637,21 +2679,23 @@ class Hub:
     def on_report(self, c, m):
         """Report someone to the server's admins, or one of their messages (message: its id, with channel, or dm: the
         other person in a direct message the reporter is in): why (reason, one of REPORT_REASONS) and, if they like,
-        more words (text). The message is copied into the report as it is now, so deleting it later doesn't hide it."""
+        more words (text). The message is copied into the report as it is now, so deleting it later doesn't hide it.
+        The iPhone app's shape works too: kind "message" (id: the message's) or "user" (user or id: the account's),
+        and note for the words. Either way the answer is "reported"."""
         me = c.user
-        reason = m.get("reason")
-        if reason not in REPORT_REASONS:
-            return
+        reason = clean_text(m.get("reason"), 40).casefold() or "other"
+        kind = m.get("kind")
+        msg_id = m.get("id") if kind == "message" else None if kind == "user" else m.get("message")
         msg = ch = None
-        if m.get("message") is not None:
+        if msg_id is not None:
             found = self._conversation(c, m)
             if not found:
                 return
             msgs, _path, _other, ch = found
-            msg = next((x for x in msgs if x["id"] == m.get("message")), None)
+            msg = next((x for x in msgs if x["id"] == msg_id), None)
             if not msg or not msg.get("uid") or isinstance(msg.get("join"), int):
                 return
-        target = self.users.get(msg["uid"] if msg else m.get("id"))
+        target = self.users.get(msg["uid"] if msg else m.get("user") or m.get("id"))
         if not target or target is me or target.get("deleted"):
             return
         now = time.time()
@@ -2661,11 +2705,12 @@ class Hub:
             return
         if any(not r.get("closed") and r["by"] == me["id"] and r["user"] == target["id"]
                and (r.get("message") or {}).get("id") == (msg["id"] if msg else None) for r in self.reports):
-            c.send({"type": "report-sent", "again": True})   # already reported, and still open
+            c.send({"type": "reported", "again": True})   # already reported, and still open
             return
         self.report_times[me["id"]] = recent + [now]
         report = {"id": secrets.token_hex(6), "at": int(now * 1000), "by": me["id"], "byName": me["name"],
-                  "user": target["id"], "userName": target["name"], "reason": reason, "text": clean_block(m.get("text"), 1000)}
+                  "user": target["id"], "userName": target["name"], "reason": reason,
+                  "text": clean_block(m.get("note") if m.get("note") is not None else m.get("text"), 1000)}
         if msg:
             report["message"] = {"id": msg["id"], "ts": msg["ts"], "text": msg.get("text", ""),
                                  "attachments": [dict(a) for a in msg.get("attachments", ())]}
@@ -2678,11 +2723,12 @@ class Hub:
         self.reports.append(report)
         self._save_reports()
         log("%s reported %s (%s)" % (me["name"], target["name"], reason))
-        c.send({"type": "report-sent"})
+        c.send({"type": "reported"})
         self._send_reports(new=report)
         for admin in self.users.values():
-            if admin is not target and admin is not me and not admin.get("deleted") and self.can_manage(admin):
-                self.notify(admin, "New report", "%s reported %s: %s" % (me["name"], target["name"], REPORT_REASONS[reason]),
+            if admin is not target and admin is not me and self.can_moderate(admin):
+                self.notify(admin, "New report", "%s reported %s: %s" % (me["name"], target["name"],
+                                                                       REPORT_REASONS.get(reason, reason.capitalize())),
                             {"kind": "report", "report": report["id"]}, thread="reports")
 
     def _save_reports(self):
@@ -2699,19 +2745,20 @@ class Hub:
         themselves. new: the report just made, so the apps can say so."""
         shown = sorted((r for r in self.reports if not r.get("closed")), key=lambda r: -r["at"])
         for client in ([only] if only else self.everyone()):
-            if self.can_manage(client.user):
+            if self.can_moderate(client.user):
                 event = {"type": "reports", "reports": [r for r in shown if r["user"] != client.id]}
                 if new and client.id not in (new["user"], new["by"]):
                     event["new"] = new["id"]
                 client.send(event)
 
     def on_reports(self, c, m):
-        if self.can_manage(c.user):
+        if self.can_moderate(c.user):
             self._send_reports(c)
 
     def on_report_close(self, c, m):
-        """An admin is done with a report (dealt with it, or nothing to do): off everyone's list."""
-        if not self.can_manage(c.user):
+        """An admin (or Staff) is done with a report (dealt with it, or nothing to do): off everyone's list. Also
+        called "report-done"."""
+        if not self.can_moderate(c.user):
             return
         report = next((r for r in self.reports if r["id"] == m.get("id") and not r.get("closed")), None)
         if not report or report["user"] == c.id:
@@ -2896,7 +2943,7 @@ class Hub:
             return
         msgs, path, other, ch = found
         msg = next((x for x in msgs if x["id"] == m.get("id")), None)
-        if not msg or (msg.get("uid") != c.id and not (ch and self.can_manage(c.user))):
+        if not msg or (msg.get("uid") != c.id and not (ch and self.can_moderate(c.user))):
             return
         if msg.get("uid") != c.id:
             log("%s deleted a message by %s in #%s" % (c.name, msg.get("name", "someone"), ch["name"]))
@@ -3115,6 +3162,9 @@ class Hub:
         to = m.get("to")
         other = self.users.get(to) if isinstance(to, str) else None
         if not other or to == c.id or other.get("deleted"):
+            return
+        if to in (c.user.get("blocked") or ()):
+            c.send({"type": "call-ended", "reason": "blocked", "with": to})
             return
         if to not in c.user.get("friends", ()) or not self.may_reach(c.user, other):
             c.send({"type": "call-ended", "reason": "not-friends", "with": to})

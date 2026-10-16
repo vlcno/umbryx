@@ -6,10 +6,15 @@
       "title": "Report and block",
       "added": [
         "Block someone from the menu on their name: no more messages, calls or friend requests between you, and their messages in channels are hidden for you. Your blocked list is in Friends.",
-        "Report someone, or one of their messages (the flag when you hover it), to the server's admins. Admins see open reports in Server settings, and can delete a reported message.",
-        "Admins can delete anyone's message in a channel (hover it, then the bin)."
+        "Admins can delete anyone's message in a channel (hover it, then the bin).",
+        "Report someone, or one of their messages (the flag when you hover it), to the server's admins and Umbryx Staff. They see open reports under the flag next to the server's name, and can delete a reported message.",
+        "Search finds whole words: \"hi\" no longer finds \"this\". End a word with * to find words starting with it.",
+        "Search for messages with images, videos, files or links: buttons under the search box and in the results, or has:image.",
+        "A Search friends box on the Friends page."
       ],
-      "fixed": []
+      "fixed": [
+        "Your phone gets notifications once nobody has used your computer for 3 minutes, instead of 20, even with Umbryx left open on it."
+      ]
     },
     {
       "date": "2026-10-15",

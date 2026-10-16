@@ -59,6 +59,7 @@
         <span id="serverPartner" class="partner-mark" data-tip="Umbryx Partner" data-tip-place="below" aria-label="Umbryx Partner: this server is partnered with Umbryx" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path class="solid" d="M23.4 12.0L23.2 12.7L22.5 13.4L21.8 14.0L21.4 14.5L21.5 15.2L21.8 16.1L22.0 17.0L21.9 17.7L21.3 18.2L20.4 18.5L19.5 18.6L18.9 18.9L18.6 19.5L18.5 20.4L18.2 21.3L17.7 21.9L17.0 22.0L16.1 21.8L15.2 21.5L14.5 21.4L14.0 21.8L13.4 22.5L12.7 23.2L12.0 23.4L11.3 23.2L10.6 22.5L10.0 21.8L9.5 21.4L8.8 21.5L7.9 21.8L7.0 22.0L6.3 21.9L5.8 21.3L5.5 20.4L5.4 19.5L5.1 18.9L4.5 18.6L3.6 18.5L2.7 18.2L2.1 17.7L2.0 17.0L2.2 16.1L2.5 15.2L2.6 14.5L2.2 14.0L1.5 13.4L0.8 12.7L0.6 12.0L0.8 11.3L1.5 10.6L2.2 10.0L2.6 9.5L2.5 8.8L2.2 7.9L2.0 7.0L2.1 6.3L2.7 5.8L3.6 5.5L4.5 5.4L5.1 5.1L5.4 4.5L5.5 3.6L5.8 2.7L6.3 2.1L7.0 2.0L7.9 2.2L8.8 2.5L9.5 2.6L10.0 2.2L10.6 1.5L11.3 0.8L12.0 0.6L12.7 0.8L13.4 1.5L14.0 2.2L14.5 2.6L15.2 2.5L16.1 2.2L17.0 2.0L17.7 2.1L18.2 2.7L18.5 3.6L18.6 4.5L18.9 5.1L19.5 5.4L20.4 5.5L21.3 5.8L21.9 6.3L22.0 7.0L21.8 7.9L21.5 8.8L21.4 9.5L21.8 10.0L22.5 10.6L23.2 11.3Z"/><path class="mark" d="M7.6 12.3l3 3 5.8-6.4"/></svg></span>
         <strong id="serverName">Umbryx</strong>
         <button id="serverEdit" class="ctl sm title-edit" type="button" title="Server settings" hidden></button>
+        <button id="reportsBtn" class="ctl sm title-edit" type="button" title="Reports" hidden></button>
       </div>
     </header>
     <button id="elsewhere" class="elsewhere" type="button" hidden></button>
@@ -160,6 +161,7 @@
           </span>
         </label>
       </form>
+      <input id="friendSearch" class="friend-search" type="search" placeholder="Search friends" aria-label="Search friends" autocomplete="off" spellcheck="false">
       <div id="friendLists" class="friend-lists"></div>
     </section>
   </main>
@@ -429,10 +431,6 @@
       <div class="invite-list" id="invList"></div>
       <small class="hint">New accounts start in direct messages. With a code, people join the server when they make their account, or later from the top of their sidebar.</small>
     </div>
-    <div class="field srv-reports" id="srvReports" hidden><span id="srvReportsHead">Reports</span>
-      <div class="invite-list" id="reportList"></div>
-      <small class="hint">What people reported to the admins. Delete a reported channel message here; kick or ban someone from the menu on their name. Done takes a report off the list for every admin.</small>
-    </div>
     <div class="field srv-bans" id="srvBans" hidden><span>Bans</span>
       <div class="invite-list" id="banList"></div>
       <small class="hint">Banned people are out of the server, and no invite code lets them back in until you unban them. They keep their account and their direct messages with friends. Ban, mute or deafen someone from the menu on their name.</small>
@@ -550,6 +548,18 @@
       <span class="spacer"></span>
       <button class="btn" value="cancel" formnovalidate>Cancel</button>
       <button class="btn danger" value="delete" id="deleteGo" disabled>Delete my account</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="reportsDlg" class="dlg small">
+  <form method="dialog">
+    <h3 id="reportsHead">Reports</h3>
+    <p class="hint">What people reported to the server's admins and Umbryx Staff. Delete a reported channel message here; kick or ban someone from the menu on their name. Done takes a report off the list for everyone.</p>
+    <div class="invite-list report-list" id="reportList"></div>
+    <div class="dlg-actions">
+      <span class="spacer"></span>
+      <button class="btn" value="close">Close</button>
     </div>
   </form>
 </dialog>

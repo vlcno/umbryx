@@ -996,6 +996,12 @@ input.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2
 .search input { width: 170px; height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); color: var(--text); transition: width .18s var(--ease, ease-out); }
 .search input:focus { width: 260px; outline: none; border-color: var(--accent); }
 .search-list { left: auto; right: 0; top: calc(100% + 6px); bottom: auto; width: 260px; }
+.search-has { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 8px 6px; }
+.search-tip { padding: 4px 8px 6px; color: var(--faint); font-size: 11.5px; line-height: 1.35; }
+.result-has { padding-bottom: 0; border-bottom: 0; }
+.result-has .result-person { padding-left: 10px; }
+.friend-search { display: block; width: 100%; max-width: 720px; margin-top: 14px; }
+.report-list { max-height: min(60vh, 520px); overflow: auto; }
 .search-list-head { padding: 4px 8px 2px; color: var(--faint); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .app.searching { grid-template-columns: 264px minmax(0, 1fr) 400px; }
 .app.searching .members { display: none; }
