@@ -29,7 +29,7 @@
       <button type="button" class="tab" data-mode="register">Create account</button>
     </div>
     <label class="field"><span>Username</span>
-      <input id="loginName" maxlength="24" required autocomplete="username">
+      <input id="loginName" maxlength="24" required autocomplete="username webauthn">
     </label>
     <label class="field"><span>Password</span>
       <input id="loginPass" type="password" required autocomplete="current-password">
@@ -44,6 +44,7 @@
     <label class="check"><input type="checkbox" id="loginKeep" checked><span>Sign in automatically on this device</span></label>
     <p id="loginError" class="form-error" hidden></p>
     <button class="btn primary" type="submit" id="loginGo">Sign in</button>
+    <button class="btn passkey-btn" type="button" id="loginPasskey" hidden>Sign in with a passkey</button>
     <button class="btn" type="button" id="loginGuest" hidden>Skip for now</button>
     <button class="btn" type="button" id="loginAuto" hidden></button>
     <button class="btn link" type="button" id="loginForget" hidden>Forget me on this device</button>
@@ -272,6 +273,11 @@
           <div class="field"><span>Nameplate</span>
             <div class="plate-picks" id="platePicks"></div>
             <p class="hint">Shows behind your name in direct messages, the member list and voice channels. Your own can be a picture, GIF or WebP, or a short MP4 or WebM video, up to 15 MB: best about 6 to 1 (for example 1320 × 230), with the interesting part on the right, since the left fades out behind your name.</p>
+          </div>
+          <div class="field set-passkeys" id="setPasskeys" hidden><span>Passkeys</span>
+            <div class="invite-list" id="passkeyList"></div>
+            <button type="button" class="btn slim" id="passkeyAdd">Add a passkey</button>
+            <p class="hint">Sign in with your face, fingerprint or device PIN instead of your password. A passkey works on the website, the apps and your phone.</p>
           </div>
           <div class="set-danger">
             <button type="button" class="btn slim danger" id="setDelete">Delete account…</button>

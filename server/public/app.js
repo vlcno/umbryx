@@ -176,6 +176,7 @@ const ICONS = {
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/>',
   headphones: '<path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4.5" height="6.5" rx="1.5"/><rect x="16.5" y="14" width="4.5" height="6.5" rx="1.5"/>',
   screen: '<rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16.5V20"/>',
+  key: '<circle cx="8" cy="15" r="4"/><path d="M10.9 12.1 20 3M16.5 6.5l3 3M14 9l2.5 2.5"/>',
   globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.4 3.5 5.2 3.5 8.5s-1.1 6.1-3.5 8.5c-2.4-2.4-3.5-5.2-3.5-8.5s1.1-6.1 3.5-8.5z"/>',
   mobile: '<rect x="7" y="3" width="10" height="18" rx="2.2"/><path d="M11 17.5h2"/>',
   image: '<rect x="3.5" y="5" width="17" height="14" rx="2.2"/><circle cx="9" cy="10" r="1.6"/><path d="m5.5 17 4.2-4.2 2.8 2.8 2.5-2.5 3.5 3.6"/>',
@@ -613,7 +614,7 @@ let retryTimer = 0;
 let stopped = true;
 let pendingAuth = null;   // sign-in details typed into the form; never stored
 let keepChoice = null;    // the "sign in automatically" box as it was when the form was sent
-const AUTH_ERRORS = new Set(['bad-login', 'bad-name', 'name-taken', 'weak-password', 'bad-server-password', 'auth-wait', 'no-guests', 'guest-wait', 'bad-invite']);
+const AUTH_ERRORS = new Set(['passkey-login', 'bad-login', 'bad-name', 'name-taken', 'weak-password', 'bad-server-password', 'auth-wait', 'no-guests', 'guest-wait', 'bad-invite']);
 
 function connect() {
   clearTimeout(retryTimer);
@@ -623,8 +624,8 @@ function connect() {
   socket.onopen = () => {
     retries = 0;
     // client: what this is, for the dot by our name (the desktop app loads this same page).
-  const client = window.umbryxApp ? 'desktop' : 'web';
-  send(pendingAuth ? { type: 'auth', client, ...pendingAuth } : { type: 'auth', client, mode: 'resume', session: session.get() });
+    const client = window.umbryxApp ? 'desktop' : 'web';
+    send(pendingAuth ? { type: 'auth', client, ...pendingAuth } : { type: 'auth', client, mode: 'resume', session: session.get() });
   };
   socket.onmessage = (event) => {
     let msg;
@@ -889,6 +890,9 @@ const handlers = {
     $('#conn').hidden = true;
     state.canManage = !!m.canManage;
     state.appAddress = m.appAddress || '';   // where invite links point (see inviteLink)
+    state.passkeys = Array.isArray(m.passkeys) ? m.passkeys : [];
+    state.passkeyDomain = m.passkeyDomain || '';
+    stopPasskeyWait();
     checkBuild(m.build);
     showServerLook(m);
     showApp();
@@ -1048,6 +1052,16 @@ const handlers = {
   // Someone this admin removed (or banned) from the server.
   removed(m) {
     toast(m.banned ? `${m.name} was banned from the server.` : `${m.name} was removed from the server.`);
+  },
+
+  // Options for adding a passkey (Settings, see askPasskeyMake), and this account's passkeys.
+  'passkey-options'(m) {
+    passkeyMake = m.error ? null : m.options || null;
+  },
+  passkeys(m) {
+    state.passkeys = Array.isArray(m.passkeys) ? m.passkeys : [];
+    renderPasskeys();
+    if (m.added) toast('Passkey added. You can sign in with it now.');
   },
 
   // What an invite link in a message shows (its card; see inviteCard).
@@ -1449,6 +1463,129 @@ function markDmRead(peer) {
 
 let authMode = 'login';
 
+/* ---------- passkeys ---------- */
+
+function fromB64url(text) {
+  const plain = String(text || '').replace(/-/g, '+').replace(/_/g, '/');
+  const bin = atob(plain + '='.repeat((4 - (plain.length % 4)) % 4));
+  return Uint8Array.from(bin, (ch) => ch.charCodeAt(0)).buffer;
+}
+function toB64url(buffer) {
+  let bin = '';
+  for (const byte of new Uint8Array(buffer)) bin += String.fromCharCode(byte);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+// Where passkeys work: the server says so for this address (never an IP address), and the browser has them. Not in
+// the Mac desktop app: macOS lets only apps Apple has signed use passkeys (Safari has them).
+const passkeysCan = () => !!window.PublicKeyCredential && !(appShell && appShell.platform === 'darwin');
+const passkeysHere = () => passkeysCan() && !!(state.info && state.info.passkeys);
+
+// Signing in with a passkey. The challenge is fetched as the sign-in screen shows, so the passkey prompt follows a
+// click at once (Safari wants that); where the browser can, the passkeys also wait in the username box's
+// suggestions (conditional mediation), with the same challenge.
+let passkeyAsk = null;   // the server's challenge: { challenge, rpId, timeout, userVerification }
+let passkeyWait = null;  // the AbortController of the request waiting in the username box
+async function fetchPasskeyAsk() {
+  passkeyAsk = null;
+  if (!passkeysHere()) return null;
+  try {
+    const res = await fetch('/api/passkey/options', { cache: 'no-store' });
+    passkeyAsk = res.ok ? await res.json() : null;
+  } catch { passkeyAsk = null; }
+  return passkeyAsk;
+}
+const passkeyRequest = (ask) => ({ challenge: fromB64url(ask.challenge), rpId: ask.rpId, timeout: ask.timeout,
+  userVerification: ask.userVerification || 'preferred', allowCredentials: [] });
+function stopPasskeyWait() {
+  if (passkeyWait) { passkeyWait.abort(); passkeyWait = null; }
+}
+function signInWithPasskey(cred) {
+  passkeyAsk = null;   // its challenge is used now
+  const r = cred.response;
+  pendingAuth = { mode: 'passkey', credential: { id: cred.id, type: cred.type, response: {
+    clientDataJSON: toB64url(r.clientDataJSON), authenticatorData: toB64url(r.authenticatorData), signature: toB64url(r.signature),
+    userHandle: r.userHandle ? toB64url(r.userHandle) : null } } };
+  keepChoice = $('#loginKeep').checked;
+  $('#loginError').hidden = true;
+  connect();
+}
+async function preparePasskeys() {
+  stopPasskeyWait();
+  $('#loginPasskey').hidden = !passkeysHere();
+  const ask = await fetchPasskeyAsk();
+  if (!ask || $('#login').hidden) return;
+  let conditional = false;
+  try { conditional = !!(PublicKeyCredential.isConditionalMediationAvailable && await PublicKeyCredential.isConditionalMediationAvailable()); } catch { /* no */ }
+  if (!conditional || passkeyWait) return;
+  const wait = passkeyWait = new AbortController();
+  try {
+    const cred = await navigator.credentials.get({ mediation: 'conditional', publicKey: passkeyRequest(ask), signal: wait.signal });
+    if (passkeyWait === wait) passkeyWait = null;
+    if (cred) signInWithPasskey(cred);
+  } catch {
+    if (passkeyWait === wait) passkeyWait = null;
+  }
+}
+$('#loginPasskey').addEventListener('click', async () => {
+  stopPasskeyWait();
+  const ask = passkeyAsk || await fetchPasskeyAsk();
+  const problem = (text) => { $('#loginError').hidden = false; $('#loginError').textContent = text; };
+  if (!ask) { problem("Passkeys don't work at this address."); return; }
+  try {
+    const cred = await navigator.credentials.get({ publicKey: passkeyRequest(ask) });
+    if (cred) { signInWithPasskey(cred); return; }
+  } catch (err) {
+    if (err && err.name !== 'NotAllowedError' && err.name !== 'AbortError') problem(`The passkey didn't work: ${err.message || err.name}`);
+  }
+  preparePasskeys();   // a fresh challenge for the next try
+});
+
+// Settings: this account's passkeys, Add a passkey (with options asked for as Settings opens, for the same reason as
+// above), and remove.
+let passkeyMake = null;
+function askPasskeyMake() {
+  passkeyMake = null;
+  if (passkeysCan() && state.passkeyDomain) send({ type: 'passkey-begin' });
+}
+function deviceName() {
+  const ua = navigator.userAgent;
+  const os = /iPhone|iPad/.test(ua) ? 'iPhone' : /Mac OS X/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /Android/.test(ua) ? 'Android' : /Linux/.test(ua) ? 'Linux' : 'This device';
+  const where = window.umbryxApp ? 'Umbryx app' : /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'browser';
+  return `${os} · ${where}`;
+}
+function renderPasskeys() {
+  const box = $('#setPasskeys');
+  box.hidden = !(passkeysCan() && state.passkeyDomain);
+  if (box.hidden) return;
+  const day = (ms) => (ms ? new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : 'never');
+  const list = state.passkeys || [];
+  $('#passkeyList').replaceChildren(...(list.length ? list.map((p) => h('div', { class: 'invite-row passkey-row' },
+    icon('key'), h('b', { class: 'ban-name', text: p.name }),
+    h('span', { class: 'invite-meta', text: `added ${day(p.created)} · last used ${day(p.used)}` }),
+    h('button', { class: 'ctl sm', type: 'button', title: 'Remove this passkey', onclick: () => {
+      if (confirm(`Remove the passkey "${p.name}"? It won't sign you in any more. Remove it from the device's passwords too.`)) send({ type: 'passkey-remove', id: p.id });
+    } }, icon('x'))))
+    : [h('div', { class: 'chan-empty', text: 'No passkeys yet.' })]));
+}
+$('#passkeyAdd').addEventListener('click', async () => {
+  const options = passkeyMake;
+  if (!options) { toast('One moment, then try again.'); askPasskeyMake(); return; }
+  passkeyMake = null;
+  const publicKey = { ...options, challenge: fromB64url(options.challenge), user: { ...options.user, id: fromB64url(options.user.id) },
+    excludeCredentials: (options.excludeCredentials || []).map((c) => ({ ...c, id: fromB64url(c.id) })) };
+  try {
+    const cred = await navigator.credentials.create({ publicKey });
+    if (cred) {
+      send({ type: 'passkey-finish', name: deviceName(), credential: { id: cred.id, type: cred.type, response: {
+        clientDataJSON: toB64url(cred.response.clientDataJSON), attestationObject: toB64url(cred.response.attestationObject) } } });
+    }
+  } catch (err) {
+    if (err && err.name === 'InvalidStateError') toast('This device has a passkey for your account already.');
+    else if (err && err.name !== 'NotAllowedError' && err.name !== 'AbortError') toast(`The passkey wasn't added: ${err.message || err.name}`);
+  }
+  askPasskeyMake();
+});
+
 // Invite codes: what someone typed or pasted, as the bare code, whether the code itself or a link ending in it
 // (app.example.com/K7QM2XPA).
 const inviteCodeOf = (text) => String(text || '').trim().replace(/[?#].*$/, '').replace(/\/+$/, '').split('/').pop()
@@ -1495,6 +1632,7 @@ function showLogin(error) {
   $('#loginAuto').textContent = 'Continue as ' + quick;
   $('#loginForget').hidden = !remembered;
   $('#loginGuest').hidden = !state.info.guests;
+  preparePasskeys();
   // Came from an invite link without being signed in: Create account, with the code in.
   if (linkInvite && !linkShown && state.info.inviteOnly) {
     linkShown = true;
@@ -5644,6 +5782,8 @@ async function openSettings() {
   fill($('#setInput'), 'audioinput', settings.inputId, 'Microphone');
   fill($('#setOutput'), 'audiooutput', settings.outputId, 'Speakers');
   fill($('#setCamera'), 'videoinput', settings.cameraId, 'Camera');
+  renderPasskeys();
+  askPasskeyMake();
   if (!$('#settingsDlg').open) {
     $('#settingsDlg').showModal();
     $('#setGrid').focus({ preventScroll: true });   // not the ✕, which the browser would otherwise ring in orange

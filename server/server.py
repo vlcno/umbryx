@@ -32,6 +32,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 import certgen
+import p256
+import passkeys
+import push
 
 ROOT = Path(__file__).resolve().parent
 PUBLIC = ROOT / "public"
@@ -76,6 +79,14 @@ DEFAULTS = {
     # "https://app.example.com". Apps that came in another way (an IP address) move to it by themselves, keeping their
     # sign-ins, once it answers with a trusted certificate. Empty: apps stay where they are.
     "appAddress": "",
+    # Passkeys belong to a domain: with "vlcno.xyz", one passkey works on every address under it (umbryx.vlcno.xyz,
+    # us.vlcno.xyz) and in the iPhone app. Empty: the address the page is on (none on an IP address: browsers refuse).
+    "passkeyDomain": "",
+    # The iPhone app as Apple names it, "TEAMID.bundle.id": its passkeys and links (/.well-known/apple-app-site-association).
+    "appleAppIds": [],
+    # Push notifications to the iPhone app through Apple: the developer account's team id, the push key's id and its
+    # file (a .p8 in the data folder: secret, never shared), the app's bundle id, and sandbox for builds from Xcode.
+    "apns": {"teamId": "", "keyId": "", "keyFile": "apns-key.p8", "bundleId": "", "sandbox": False},
     "iceServers": [
         {"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]}
     ],
@@ -868,6 +879,14 @@ def cert_fingerprint():
         return ""
 
 
+def bare_host(value):
+    """A Host header's name, without its port: "umbryx.vlcno.xyz:443" -> "umbryx.vlcno.xyz", "[::1]:3000" -> "::1"."""
+    value = (value or "").strip().lower()
+    if value.startswith("["):
+        return value[1:value.find("]")] if "]" in value else ""
+    return value.rsplit(":", 1)[0] if value.count(":") == 1 else value
+
+
 def app_address(cfg):
     """config.json's "appAddress", if it is a secure address ("https://..."), else ""."""
     value = str(cfg.get("appAddress") or "").strip()
@@ -974,6 +993,8 @@ class Client:
         self.camera = False
         self.idle = False                        # this device has been left alone for a while
         self.device = "web"                      # "desktop", "web" or "mobile" (see device_of and on_auth)
+        self.host = ""                           # the address it came to (for passkeys, see Hub.passkey_domain)
+        self.background = False                  # the phone app is in the background (app-state): push to it
         self.activities = []                     # what its person is playing, heard by this device (on_activity)
         self.activities_at = 0.0
         self.since = self.last_seen = time.monotonic()
@@ -1027,6 +1048,10 @@ class Hub:
             self.invites = [x for x in saved if isinstance(x, dict) and x.get("code")]
         self.embed_cache = {}  # (kind, id) -> (until, preview or None): link previews looked up lately
         self.embed_lookups = {}   # (kind, id) -> the lookup under way, shared by everyone asking meanwhile
+        self.passkey_asks = {}    # challenge -> {"exp", "rp", "kind", "uid"}: passkey requests waiting for an answer
+        self.passkey_ips = {}     # ip -> when it last asked for a passkey sign-in challenge
+        self.push_auth = None     # (Apple provider token, made at, (team, key id)) for push notifications
+        self.push_warned = False
         self._load_users()
         self.channels = self._load_channels()
         self.messages = {c["id"]: self._load_lines(MESSAGES / (c["id"] + ".jsonl")) for c in self.channels if c["type"] == "text"}
@@ -1045,6 +1070,8 @@ class Hub:
             "dm-send": self.on_dm_send, "dm-history": self.on_dm_history, "dm-read": self.on_dm_read, "dm-close": self.on_dm_close,
             "server-mute": self.on_server_mute, "server-deafen": self.on_server_deafen,
             "ban": self.on_ban, "unban": self.on_unban, "bans": self.on_bans, "invite-info": self.on_invite_info,
+            "passkey-begin": self.on_passkey_begin, "passkey-finish": self.on_passkey_finish,
+            "passkey-remove": self.on_passkey_remove, "push-token": self.on_push_token, "app-state": self.on_app_state,
             "friend-add": self.on_friend_add, "friend-accept": self.on_friend_accept,
             "friend-remove": self.on_friend_remove,
             "voice-join": self.on_voice_join, "voice-leave": self.on_voice_leave, "voice-flags": self.on_voice_flags,
@@ -1419,6 +1446,8 @@ class Hub:
             self.users[rec["id"]] = rec
             self.names[name.casefold()] = rec
             log("%s created an account%s" % (name, " with an invite" if invite else " (in direct messages until invited)" if rec.get("guest") else ""))
+        elif mode == "passkey":
+            rec = self._passkey_sign_in(c, m)
         elif mode == "guest":
             # "Skip for now": an account without a password, which only this device's session token opens.
             if not self.cfg.get("guests", True):
@@ -1542,6 +1571,223 @@ class Hub:
         for x in list(self.conns(rec["id"])):
             x.send({"type": "kicked", "by": c.name})
             x.writer.close()
+
+    # passkeys
+
+    def passkey_domain(self, host):
+        """The domain passkeys belong to at this address: config.json's passkeyDomain when the address is it or under
+        it; with none set, the address itself; never an IP address (browsers refuse those)."""
+        host = (host or "").lower()
+        if not host or is_ip(host):
+            return ""
+        domain = str(self.cfg.get("passkeyDomain") or "").strip().lower().lstrip(".")
+        if domain:
+            return domain if host == domain or host.endswith("." + domain) else ""
+        return host
+
+    @staticmethod
+    def _passkey_origin_ok(domain):
+        """Which pages may use passkeys of this domain: secure ones at it or under it (http only on localhost)."""
+        def ok(origin):
+            parts = urlsplit(origin)
+            name = (parts.hostname or "").lower()
+            secure = parts.scheme == "https" or (parts.scheme == "http" and name == "localhost")
+            return secure and (name == domain or name.endswith("." + domain))
+        return ok
+
+    def passkey_challenge(self, domain, kind, uid=None):
+        """A one-time challenge for a passkey request (kind "get": signing in; "create": adding one), good for 5
+        minutes; None when too many are waiting."""
+        now = time.time()
+        for key in [key for key, ask in self.passkey_asks.items() if ask["exp"] < now]:
+            del self.passkey_asks[key]
+        if len(self.passkey_asks) >= 5000:
+            return None
+        challenge = passkeys.b64url(secrets.token_bytes(32))
+        self.passkey_asks[challenge] = {"exp": now + 300, "rp": domain, "kind": kind, "uid": uid}
+        return challenge
+
+    @staticmethod
+    def _passkey_list(rec):
+        return [{"id": p["id"], "name": p.get("name", "Passkey"), "created": p.get("created", 0), "used": p.get("used", 0)}
+                for p in rec.get("passkeys", [])]
+
+    def _passkey_answer(self, m, kind):
+        """The challenge a passkey answer (credential) is for, taken off the list, and its decoded parts."""
+        cred = m.get("credential") if isinstance(m.get("credential"), dict) else {}
+        response = cred.get("response") if isinstance(cred.get("response"), dict) else {}
+        try:
+            parts = {key: passkeys.unb64url(response.get(key)) for key in ("clientDataJSON", "attestationObject", "authenticatorData", "signature")}
+        except (ValueError, TypeError):
+            return None, None, None
+        challenge = passkeys.challenge_of(parts["clientDataJSON"])
+        ask = self.passkey_asks.pop(challenge, None) if challenge else None
+        if not ask or ask["kind"] != kind or ask["exp"] < time.time():
+            return None, None, None
+        return cred, parts, {**ask, "challenge": challenge}
+
+    def on_passkey_begin(self, c, m):
+        """Settings asks to add a passkey: what the device needs to make one for this account."""
+        domain = self.passkey_domain(c.host)
+        challenge = domain and self.passkey_challenge(domain, "create", c.id)
+        if not challenge:
+            c.send({"type": "passkey-options", "error": "Passkeys don't work at this address."})
+            return
+        rec = c.user
+        c.send({"type": "passkey-options", "options": {
+            "rp": {"id": domain, "name": "Umbryx"},
+            "user": {"id": passkeys.b64url(rec["id"].encode()), "name": rec["name"], "displayName": rec.get("display") or rec["name"]},
+            "challenge": challenge, "timeout": 120000, "attestation": "none",
+            "pubKeyCredParams": [{"type": "public-key", "alg": passkeys.ES256}, {"type": "public-key", "alg": passkeys.RS256}],
+            "authenticatorSelection": {"residentKey": "required", "requireResidentKey": True, "userVerification": "preferred"},
+            "excludeCredentials": [{"type": "public-key", "id": p["id"]} for p in rec.get("passkeys", [])],
+        }})
+
+    def on_passkey_finish(self, c, m):
+        cred, parts, ask = self._passkey_answer(m, "create")
+        if not ask or ask["uid"] != c.id:
+            c.send({"type": "error", "code": "passkey", "message": "That took too long. Try adding the passkey again."})
+            return
+        try:
+            made = passkeys.verify_registration(parts["clientDataJSON"], parts["attestationObject"], ask["challenge"],
+                                                ask["rp"], self._passkey_origin_ok(ask["rp"]))
+        except (ValueError, IndexError, KeyError, TypeError) as err:
+            c.send({"type": "error", "code": "passkey", "message": "The passkey wasn't added: %s." % err})
+            return
+        if any(p["id"] == made["id"] for r in self.users.values() for p in r.get("passkeys", [])):
+            c.send({"type": "error", "code": "passkey", "message": "That passkey is on an account already."})
+            return
+        name = clean_text(m.get("name"), 40) or "Passkey"
+        kept = c.user.setdefault("passkeys", [])
+        kept.append({**made, "rp": ask["rp"], "name": name, "created": int(time.time() * 1000), "used": 0})
+        del kept[:-10]
+        self._save_users()
+        log("%s added a passkey (%s)" % (c.name, name))
+        self.send_to(c.id, {"type": "passkeys", "passkeys": self._passkey_list(c.user), "added": made["id"]})
+
+    def on_passkey_remove(self, c, m):
+        kept = c.user.get("passkeys", [])
+        left = [p for p in kept if p["id"] != m.get("id")]
+        if len(left) == len(kept):
+            return
+        c.user["passkeys"] = left
+        self._save_users()
+        log("%s removed a passkey" % c.name)
+        self.send_to(c.id, {"type": "passkeys", "passkeys": self._passkey_list(c.user)})
+
+    def _passkey_sign_in(self, c, m):
+        """Signing in with a passkey (auth mode "passkey"): the account whose passkey signed this server's challenge."""
+        cred, parts, ask = self._passkey_answer(m, "get")
+        if not ask:
+            self._auth_error(c, "passkey-login", "That passkey request expired. Try again.")
+        found = next(((r, p) for r in self.users.values() if not r.get("deleted")
+                      for p in r.get("passkeys", []) if p["id"] == cred.get("id") and p.get("rp") == ask["rp"]), None)
+        if not found:
+            self._auth_error(c, "passkey-login", "That passkey isn't on any account here. Sign in with your password, then add it in Settings.", count=True)
+        rec, stored = found
+        try:
+            count = passkeys.verify_assertion(stored, parts["clientDataJSON"], parts["authenticatorData"], parts["signature"],
+                                              ask["challenge"], ask["rp"], self._passkey_origin_ok(ask["rp"]))
+        except (ValueError, IndexError, KeyError, TypeError) as err:
+            self._auth_error(c, "passkey-login", "That passkey didn't work: %s." % err, count=True)
+        stored["count"] = count
+        stored["used"] = int(time.time() * 1000)
+        log("%s signed in with a passkey" % rec["name"])
+        return rec
+
+    # push notifications (the iPhone app)
+
+    def on_push_token(self, c, m):
+        """The iPhone app's device token for push notifications ("remove": true when it signs out or turns them off).
+        A device belongs to one account at a time."""
+        token = str(m.get("token") or "").lower()
+        if not re.fullmatch(r"[0-9a-f]{64,200}", token):
+            return
+        for rec in self.users.values():
+            if any(t.get("token") == token for t in rec.get("pushTokens", [])):
+                rec["pushTokens"] = [t for t in rec["pushTokens"] if t.get("token") != token]
+        if m.get("remove") is not True:
+            tokens = c.user.setdefault("pushTokens", [])
+            tokens.append({"token": token, "sandbox": m.get("sandbox") is True, "added": int(time.time() * 1000)})
+            del tokens[:-10]
+        self._save_users()
+
+    def on_app_state(self, c, m):
+        """The phone app went to the background (push notifications reach it) or came back (it shows things itself)."""
+        c.background = m.get("state") == "background"
+
+    def _push_ready(self):
+        """(provider token, bundle id, sandbox) when push notifications are set up (config "apns" and its key file),
+        else None. The token is remade every 50 minutes."""
+        cfg = self.cfg.get("apns") if isinstance(self.cfg.get("apns"), dict) else {}
+        team, key_id, bundle = (str(cfg.get(k) or "").strip() for k in ("teamId", "keyId", "bundleId"))
+        key_file = str(cfg.get("keyFile") or "apns-key.p8")
+        if not (team and key_id and bundle) or "/" in key_file or "\\" in key_file:
+            return None
+        now = time.time()
+        if not self.push_auth or now - self.push_auth[1] > 50 * 60 or self.push_auth[2] != (team, key_id):
+            try:
+                d = p256.private_key_from_pem((DATA / key_file).read_text("ascii"))
+                self.push_auth = (push.provider_token(team, key_id, d, now), now, (team, key_id))
+            except (OSError, ValueError, StopIteration, IndexError) as err:
+                if not self.push_warned:
+                    self.push_warned = True
+                    log("! push notifications are set up but the key could not be read (%s): check %s" % (type(err).__name__, key_file))
+                return None
+        return self.push_auth[0], bundle, cfg.get("sandbox") is True
+
+    @staticmethod
+    def _shown_name(viewer, rec):
+        """rec's name as viewer sees it: their nickname for rec, else rec's display name, else the username."""
+        return (viewer.get("nicknames") or {}).get(rec["id"]) or rec.get("display") or rec["name"]
+
+    @staticmethod
+    def _push_text(msg):
+        text = re.sub(r"\s+", " ", msg.get("text") or "").strip()
+        if text:
+            return text if len(text) <= 240 else text[:237] + "..."
+        files = msg.get("attachments") or []
+        kinds = {str(a.get("type") or "").split("/")[0] for a in files}
+        return "Sent a picture." if kinds == {"image"} else "Sent a video." if kinds == {"video"} else "Sent a file."
+
+    def notify(self, rec, title, body, data, ping=False, call=False, thread=None):
+        """A push notification to rec's iPhones, when push is set up and rec isn't looking already: nothing while
+        they're on do-not-disturb (except a ping), or while a device of theirs is in use (the phone app open, or a
+        computer they aren't away from)."""
+        tokens = rec.get("pushTokens")
+        if not tokens or rec.get("deleted") or (rec.get("status") == "dnd" and not ping):
+            return
+        if any(not x.idle and not x.background for x in self.conns(rec["id"])):
+            return
+        ready = self._push_ready()
+        if not ready:
+            return
+        token, bundle, sandbox_default = ready
+        aps = {"alert": {"title": title[:100], "body": body[:240]}, "sound": "default",
+               "badge": sum(d["unread"] for d in self._dm_summaries(rec))}
+        if thread:
+            aps["thread-id"] = thread
+        if call or ping:
+            aps["interruption-level"] = "time-sensitive"
+        payload = {"aps": aps, "umbryx": data}
+        loop = asyncio.get_running_loop()
+        for entry in list(tokens):
+            sandbox = entry.get("sandbox", sandbox_default)
+            job = loop.run_in_executor(None, push.send, entry["token"], payload, bundle, token, sandbox,
+                                       "alert", 10, ("call-" + data["call"]) if call else None)
+            job.add_done_callback(lambda done, rec=rec, entry=entry: self._pushed(rec, entry, done))
+
+    def _pushed(self, rec, entry, done):
+        try:
+            status, reason = done.result()
+        except (OSError, ConnectionError, ValueError) as err:
+            log("! a push notification could not be sent (%s)" % err)
+            return
+        if reason in ("BadDeviceToken", "Unregistered", "DeviceTokenNotForTopic"):
+            rec["pushTokens"] = [t for t in rec.get("pushTokens", []) if t is not entry]   # that phone is gone
+            self._save_users()
+        elif reason:
+            log("! Apple refused a push notification: %s" % reason)
 
     # moderation: server mute, server deafen, ban
 
@@ -1896,9 +2142,16 @@ class Hub:
             "serverPartner": not guest and bool(self.cfg.get("serverPartner")),
             "spotifyClientId": self.cfg.get("spotifyClientId", ""),
             "appAddress": app_address(self.cfg),   # where desktop apps should reach this server (see the page's offerMove)
+            # This account's passkeys, and the domain passkeys belong to on this address ("" where they do not work).
+            "passkeys": self._passkey_list(rec), "passkeyDomain": self.passkey_domain(c.host),
+            "push": bool(self._push_ready()),      # whether the iPhone app can have push notifications here
             "canManage": self.can_manage(rec), "build": page_build(),
             "iceServers": self.cfg["iceServers"], "maxUploadMB": self.cfg["maxUploadMB"],
         })
+        # A call ringing for this account (opened from its push notification, say): this device can answer it.
+        for call in self.calls.values():
+            if call["to"] == rec["id"] and not call["active"]:
+                c.send({"type": "call-incoming", "call": call["id"], "with": call["from"]})
         if first:
             self.broadcast({"type": "user-join", "user": self.public(rec)}, skip=c)
             log("%s is online%s" % (rec["name"], " (guest)" if guest else ""))
@@ -1909,6 +2162,9 @@ class Hub:
 
     def on_logout(self, c, m):
         self.sessions.pop(token_hash(m.get("session")), None)
+        token = str(m.get("pushToken") or "").lower()
+        if token and c.user:
+            c.user["pushTokens"] = [t for t in c.user.get("pushTokens", []) if t.get("token") != token]
         self._save_users()
         raise Kick()
 
@@ -2166,6 +2422,8 @@ class Hub:
         self._save_users()
         self.send_to(target["id"], {"type": "ping", "from": c.id})
         self.send_to(c.id, {"type": "ping-sent", "to": target["id"]})
+        self.notify(target, self._shown_name(target, c.user), "Pinged you while you are on Do Not Disturb.",
+                    {"kind": "ping", "from": c.id}, ping=True, thread="dm-" + c.id)
 
     # friends
 
@@ -2205,6 +2463,7 @@ class Hub:
         else:
             me["outgoing"].append(target["id"])
             target["incoming"].append(me["id"])
+            self.notify(target, self._shown_name(target, me), "Sent you a friend request.", {"kind": "friend", "from": me["id"]})
         self._push_friends(me, target)
 
     def on_friend_accept(self, c, m):
@@ -2244,6 +2503,14 @@ class Hub:
         self.messages[ch["id"]].append(msg)
         self._append_line(MESSAGES / (ch["id"] + ".jsonl"), msg)
         self.broadcast({"type": "chat", "message": msg})
+        # A push to whoever is @mentioned or replied to (not the writer, not guests: they cannot see channels).
+        replied = (reply or {}).get("uid")
+        for rec in self.users.values():
+            if rec is c.user or rec.get("guest") or rec.get("deleted"):
+                continue
+            if rec["id"] == replied or (text and re.search(r"(?<![\w@])@" + re.escape(rec["name"]) + r"(?![\w])", text, re.I)):
+                self.notify(rec, "%s in #%s" % (self._shown_name(rec, c.user), ch["name"]), self._push_text(msg),
+                            {"kind": "mention", "channel": ch["id"], "id": msg["id"]}, thread="ch-" + ch["id"])
 
     def on_history(self, c, m):
         ch = self.channel(m.get("channel"), "text")
@@ -2302,6 +2569,8 @@ class Hub:
         self._append_line(DMS / (key + ".jsonl"), msg)
         self.send_to(c.id, {"type": "dm", "message": msg})   # the sender's other devices show it too
         self.send_to(target["id"], {"type": "dm", "message": msg})
+        self.notify(target, self._shown_name(target, c.user), self._push_text(msg),
+                    {"kind": "dm", "from": c.id, "id": msg["id"]}, thread="dm-" + c.id)
 
     def on_dm_history(self, c, m):
         other = self.users.get(m.get("with"))
@@ -2587,7 +2856,8 @@ class Hub:
     def on_call_invite(self, c, m):
         to = m.get("to")
         other = self.users.get(to) if isinstance(to, str) else None
-        if not other or not self.conns(to) or to == c.id or not self.may_reach(c.user, other):
+        by_push = bool(other and other.get("pushTokens") and self._push_ready())   # rings their phone while it is closed
+        if not other or (not self.conns(to) and not by_push) or to == c.id or not self.may_reach(c.user, other):
             c.send({"type": "call-ended", "reason": "offline"})
             return
         if any(c.id in (x["from"], x["to"]) or to in (x["from"], x["to"]) for x in self.calls.values()):
@@ -2602,6 +2872,8 @@ class Hub:
         for x in self.conns(c.id):
             x.send({"type": "call-ringing", "call": call["id"], "with": to, **({} if x is c else {"elsewhere": True})})
         self.send_to(to, {"type": "call-incoming", "call": call["id"], "with": c.id})
+        self.notify(other, self._shown_name(other, c.user), "Incoming call", {"kind": "call", "from": c.id, "call": call["id"]},
+                    call=True, thread="call-" + c.id)
 
     def on_call_answer(self, c, m):
         call = self.calls.get(m.get("call"))
@@ -2926,9 +3198,31 @@ async def handle_http(hub, req, reader, writer):
                 # Where the desktop app should reach this server, and the certificate it may know it by already
                 # (so an app can tell that address leads here before moving to it).
                 "appAddress": app_address(hub.cfg), "cert": cert_fingerprint(),
+                # The domain passkeys belong to at this address ("" where they don't work: an IP address).
+                "passkeys": hub.passkey_domain(bare_host(req.headers.get("x-forwarded-host") or req.headers.get("host"))),
                 # Only a browser on the server computer is told about (or offered) the automatic sign-in.
                 "autoLogin": hub.auto_account()["name"] if hub.auto_account() and is_local(req, writer) else "",
             })
+        if path == "/api/passkey/options":
+            # Signing in with a passkey: a challenge for this address's passkey domain (asked before signing in).
+            domain = hub.passkey_domain(bare_host(req.headers.get("x-forwarded-host") or req.headers.get("host")))
+            ip = req.headers["x-forwarded-for"].split(",")[0].strip() if hub.cfg.get("trustProxy") and req.headers.get("x-forwarded-for") \
+                else (writer.get_extra_info("peername") or ("?",))[0]
+            asked = hub.passkey_ips.setdefault(ip, deque(maxlen=30))
+            if len(asked) == asked.maxlen and time.time() - asked[0] < 60:
+                return await respond_json(writer, 429, {"error": "Too many passkey requests. Wait a minute."})
+            asked.append(time.time())
+            challenge = domain and hub.passkey_challenge(domain, "get")
+            if not challenge:
+                return await respond_json(writer, 404, {"error": "Passkeys don't work at this address."})
+            return await respond_json(writer, 200, {"challenge": challenge, "rpId": domain, "timeout": 120000, "userVerification": "preferred"})
+        if path == "/.well-known/apple-app-site-association":
+            # The iPhone app (config "appleAppIds"): its passkeys for this domain, and invite links opening in it.
+            ids = [str(x) for x in hub.cfg.get("appleAppIds") or [] if re.fullmatch(r"[A-Z0-9]{10}\.[A-Za-z0-9.-]+", str(x))]
+            if not ids:
+                return await respond(writer, 404, "Not found")
+            return await respond_json(writer, 200, {"webcredentials": {"apps": ids},
+                                                     "applinks": {"details": [{"appIDs": ids, "components": [{"/": "/????????", "comment": "invite links"}]}]}})
         if path.startswith("/uploads/"):
             return await serve_file(writer, req, UPLOADS, path[len("/uploads/"):], upload=True)
         if path.startswith("/updates/"):   # the desktop app's updates; each app checks the signature itself
@@ -2968,6 +3262,7 @@ async def handle_websocket(hub, req, reader, writer):
         "Sec-WebSocket-Accept: %s\r\n\r\n" % accept
     ).encode("ascii"))
     client = Client(writer)
+    client.host = bare_host(forwarded or host)
     client.local = is_local(req, writer)
     client.device = device_of(req.headers.get("user-agent"))
     if hub.cfg.get("trustProxy") and req.headers.get("x-forwarded-for"):

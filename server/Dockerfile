@@ -14,7 +14,7 @@ RUN useradd --system --uid 10001 --home-dir /app umbryx \
  && chown umbryx /data
 
 WORKDIR /app
-COPY server.py certgen.py ./
+COPY *.py ./
 COPY public ./public
 
 USER umbryx

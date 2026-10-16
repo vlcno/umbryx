@@ -14,17 +14,17 @@ directly. There is no image to build and nothing to install.
 sudo mkdir -p /opt/umbryx/app /opt/umbryx/data
 ```
 
-Then copy `server.py`, `certgen.py` and the `public` folder into `/opt/umbryx/app`. From Windows,
+Then copy the `.py` files (`server.py`, `certgen.py`, `p256.py`, `passkeys.py`, `push.py`) and the `public` folder into `/opt/umbryx/app`. From Windows,
 in this folder, replace `you@your-server` with your login:
 
 ```bash
-scp -r server.py certgen.py public you@your-server:/tmp/
+scp -r *.py public you@your-server:/tmp/
 ```
 
 and on the server:
 
 ```bash
-sudo mv /tmp/server.py /tmp/certgen.py /tmp/public /opt/umbryx/app/
+sudo mv /tmp/*.py /tmp/public /opt/umbryx/app/
 ```
 
 **2. Create the stack.** In Portainer open **Stacks > Add stack**, name it `umbryx`, choose
@@ -53,7 +53,7 @@ The security certificate is recreated for the new address automatically.
 
 ## Updating
 
-Copy the new `server.py`, `certgen.py` and `public` over the old ones in `/opt/umbryx/app`, then
+Copy the new `.py` files and `public` over the old ones in `/opt/umbryx/app`, then
 restart the container in Portainer. Data is not touched.
 
 The server also hands out updates of the desktop app: `tools/publish_update.py` sends a new version,
@@ -95,6 +95,9 @@ main README's "What you are playing" says how to make one).
 | `guests` | `true` by default: **Skip for now** on the sign-in screen, for people without an account, who see only the friends they add. `false` turns it off. |
 | `hosts` | Same as `UMBRYX_HOSTS`: addresses people use to reach the server. |
 | `trustProxy` | Set to `true` only when a reverse proxy sits in front, so sign-in limits apply per visitor. |
+| `passkeyDomain` | The domain passkeys belong to, such as `"vlcno.xyz"`: one passkey then works on every address under it (the website, the apps' address) and in the iPhone app. Set it before anyone adds a passkey: passkeys made for another domain stop working when it changes. Empty: the address the page is on (none on an IP address). |
+| `appleAppIds` | The iPhone app as Apple names it, `["TEAMID.bundle.id"]`. The server then answers `/.well-known/apple-app-site-association`, which the app needs for passkeys (served at the passkey domain itself) and for invite links that open in it. |
+| `apns` | Push notifications to the iPhone app: `{"teamId": "...", "keyId": "...", "keyFile": "apns-key.p8", "bundleId": "...", "sandbox": false}`. Make a push key in your Apple developer account (Keys, Apple Push Notifications service), put the `.p8` file in the data folder (readable by the container's user, and by no one else), and restart. `sandbox: true` only while testing builds run from Xcode. |
 | `appAddress` | The address the desktop app should use, when it is not the website's: `"https://app.example.com"`. Apps that came in another way (an IP address) move there by themselves, keeping their sign-ins, once it answers with a trusted certificate and is this same server. Invite links use it too. Empty: apps stay where they are, and links use the website's address. |
 | `maxUploadMB` | Largest file that can be uploaded (200 by default). |
 | `iceServers` | STUN/TURN servers used to connect people's calls to each other. |

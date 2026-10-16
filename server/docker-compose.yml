@@ -1,7 +1,7 @@
 # Umbryx server for Docker on Linux. Paste this into Portainer: Stacks > Add stack > Web editor.
 #
 # Before deploying, put the server files on the Linux machine:
-#   /opt/umbryx/app    server.py, certgen.py and the public folder
+#   /opt/umbryx/app    the .py files (server.py, certgen.py, p256.py, passkeys.py, push.py) and the public folder
 #   /opt/umbryx/data   created automatically; accounts, messages and uploads live here
 #
 # The server only needs the Python standard library, so the stock Python image runs it as is:

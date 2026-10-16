@@ -191,6 +191,9 @@ a { color: var(--accent); }
 .invite-join.joined { border-color: var(--line); background: var(--hover); color: var(--text); }
 .invite-join:disabled { opacity: .6; cursor: default; }
 .ban-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.passkey-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.set-passkeys #passkeyAdd { justify-self: start; }
+.passkey-row .icon svg { width: 18px; height: 18px; color: var(--dim); }
 .chan-members { display: grid; gap: 2px; padding: 2px 0 6px 30px; }
 .vm { display: flex; align-items: center; gap: 8px; height: 28px; padding-right: 6px; border: 0; background: none; color: var(--dim); font-size: 13px; text-align: left; }
 .vm-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

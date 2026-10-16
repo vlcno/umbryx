@@ -111,8 +111,8 @@ files in its data folder (`updates`), so updating the server itself does not rem
 
 ## The server
 
-See [server/README.md](server/README.md) for the Portainer steps. In short: copy `server.py`,
-`certgen.py` and `public` to `/opt/umbryx/app` on the Ubuntu machine, paste
+See [server/README.md](server/README.md) for the Portainer steps. In short: copy the `.py` files
+and `public` to `/opt/umbryx/app` on the Ubuntu machine, paste
 `server/docker-compose.yml` into a new Portainer stack, set `UMBRYX_HOSTS` to the server's
 address, and deploy.
 
@@ -351,7 +351,7 @@ window or tab. Others click **Watch stream** on your tile.
 
 | Folder | What is in it |
 | --- | --- |
-| `server` | The server (`server.py`, `certgen.py`) and the Docker files. Python standard library only. |
+| `server` | The server (`server.py`; `certgen.py` makes its certificate; `p256.py`, `passkeys.py` and `push.py` are passkeys and the iPhone app's push notifications) and the Docker files. Python standard library only. |
 | `server/public` | The whole interface: `index.html`, `app.js`, `style.css`, the logo, the emoji list and the two ring sounds. |
 | `desktop` | The Windows app's source: `main.js` (the window), `preload.js`, `presence.js`, `games.js` and `spotify.js` (what you are playing), the setup screen and the screen picker. |
 | `tools` | Scripts that make the emoji list, the app icons, the Mac app, the logo and ring-sound options, and `publish_update.py`, which offers a new version of the desktop app to everyone. |
