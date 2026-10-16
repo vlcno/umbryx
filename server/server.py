@@ -1311,7 +1311,9 @@ class Hub:
             if (all(x.idle for x in conns), self.activities_of(client.id), self.devices_of(client.id)) != was:
                 self.broadcast({"type": "user-update", "user": self.public(client.user)})
             return
-        for call in [x for x in self.calls.values() if client.id in (x["from"], x["to"])]:
+        # Their calls end, except one still ringing for them: it rings on (their phone, through its push) until it's
+        # answered or goes unanswered, as when a phone puts the app in the background.
+        for call in [x for x in self.calls.values() if client.id == x["from"] or (client.id == x["to"] and x["active"])]:
             self._end_call(call, "left", by=client)
         del self.online[client.id]
         self.broadcast({"type": "user-leave", "id": client.id})
@@ -1795,7 +1797,11 @@ class Hub:
         if not ready:
             return
         token, bundle, sandbox_default = ready
-        aps = {"alert": {"title": title[:100], "body": body[:240]}, "sound": "default",
+        # The iPhone app's own sounds: its ring for calls, its message sound for messages, pings, mentions and replies;
+        # the system's for missed calls and friend requests.
+        sound = {"call": "incoming.caf", "dm": "message.caf", "ping": "message.caf", "mention": "message.caf",
+                 "message": "message.caf"}.get(data.get("kind"), "default")
+        aps = {"alert": {"title": title[:100], "body": body[:240]}, "sound": sound,
                "badge": sum(d["unread"] for d in self._dm_summaries(rec))}
         if thread:
             aps["thread-id"] = thread
