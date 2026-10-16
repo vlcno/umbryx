@@ -1760,7 +1760,7 @@ class Hub:
         kinds = {str(a.get("type") or "").split("/")[0] for a in files}
         return "Sent a picture." if kinds == {"image"} else "Sent a video." if kinds == {"video"} else "Sent a file."
 
-    def notify(self, rec, title, body, data, ping=False, call=False, thread=None):
+    def notify(self, rec, title, body, data, ping=False, call=False, thread=None, collapse=None):
         """A push notification to rec's iPhones, when push is set up and rec isn't looking already: nothing while
         they're on do-not-disturb (except a ping), or while a device of theirs is in use (the phone app open, or a
         computer they aren't away from)."""
@@ -1783,8 +1783,7 @@ class Hub:
         loop = asyncio.get_running_loop()
         for entry in list(tokens):
             sandbox = entry.get("sandbox", sandbox_default)
-            job = loop.run_in_executor(None, push.send, entry["token"], payload, bundle, token, sandbox,
-                                       "alert", 10, ("call-" + data["call"]) if call else None)
+            job = loop.run_in_executor(None, push.send, entry["token"], payload, bundle, token, sandbox, "alert", 10, collapse)
             job.add_done_callback(lambda done, rec=rec, entry=entry: self._pushed(rec, entry, done))
 
     def _pushed(self, rec, entry, done):
@@ -2159,6 +2158,10 @@ class Hub:
             "canManage": self.can_manage(rec), "build": page_build(),
             "iceServers": self.cfg["iceServers"], "maxUploadMB": self.cfg["maxUploadMB"],
         })
+        # Calls that rang while this account was nowhere on, and nobody answered.
+        if rec.get("missedCalls"):
+            c.send({"type": "missed-calls", "calls": rec.pop("missedCalls")})
+            self._save_users()
         # A call ringing for this account (opened from its push notification, say): this device can answer it.
         for call in self.calls.values():
             if call["to"] == rec["id"] and not call["active"]:
@@ -2865,11 +2868,15 @@ class Hub:
     # one-on-one calls: a private two-person voice room that is not a channel
 
     def on_call_invite(self, c, m):
+        """A call, to a friend only (people who added each other). It rings even while they're offline: their phone
+        through a push, and any device they open while it rings (see _sign_in); unanswered, it waits for them as a
+        missed call (see _end_call)."""
         to = m.get("to")
         other = self.users.get(to) if isinstance(to, str) else None
-        by_push = bool(other and other.get("pushTokens") and self._push_ready())   # rings their phone while it is closed
-        if not other or (not self.conns(to) and not by_push) or to == c.id or not self.may_reach(c.user, other):
-            c.send({"type": "call-ended", "reason": "offline"})
+        if not other or to == c.id or other.get("deleted"):
+            return
+        if to not in c.user.get("friends", ()) or not self.may_reach(c.user, other):
+            c.send({"type": "call-ended", "reason": "not-friends", "with": to})
             return
         if any(c.id in (x["from"], x["to"]) or to in (x["from"], x["to"]) for x in self.calls.values()):
             c.send({"type": "call-ended", "reason": "busy", "with": to})
@@ -2884,7 +2891,7 @@ class Hub:
             x.send({"type": "call-ringing", "call": call["id"], "with": to, **({} if x is c else {"elsewhere": True})})
         self.send_to(to, {"type": "call-incoming", "call": call["id"], "with": c.id})
         self.notify(other, self._shown_name(other, c.user), "Incoming call", {"kind": "call", "from": c.id, "call": call["id"]},
-                    call=True, thread="call-" + c.id)
+                    call=True, thread="call-" + c.id, collapse="call-" + call["id"])
 
     def on_call_answer(self, c, m):
         call = self.calls.get(m.get("call"))
@@ -2919,6 +2926,16 @@ class Hub:
         if self.calls.pop(call["id"], None) is None:
             return
         call["timer"].cancel()
+        callee, caller = self.users.get(call["to"]), self.users.get(call["from"])
+        if reason == "missed" and callee and caller and not self.conns(call["to"]):
+            # Nobody answered and they weren't on: kept to tell them when they're next on (see _sign_in); their
+            # phone's "Incoming call" notification becomes "Missed call".
+            missed = callee.setdefault("missedCalls", [])
+            missed.append({"from": call["from"], "at": int(time.time() * 1000)})
+            del missed[:-20]
+            self._save_users()
+            self.notify(callee, self._shown_name(callee, caller), "Missed call", {"kind": "missed-call", "from": call["from"]},
+                        thread="call-" + call["from"], collapse="call-" + call["id"])
         for uid in (call["from"], call["to"]):
             for user in list(self.conns(uid)):
                 if user.voice == call["room"]:

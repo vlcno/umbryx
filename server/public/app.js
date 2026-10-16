@@ -1266,6 +1266,20 @@ const handlers = {
     updateTitle();
   },
 
+  // Calls that rang while this account wasn't on anywhere, and nobody answered.
+  'missed-calls'(m) {
+    const calls = Array.isArray(m.calls) ? m.calls : [];
+    const by = new Map();
+    for (const c of calls) by.set(c.from, [...(by.get(c.from) || []), c.at]);
+    const time = (ms) => new Date(ms).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+    for (const [from, times] of by) {
+      const user = state.users.get(from);
+      const who = user ? nick(user) : 'Someone';
+      toast(times.length > 1 ? `You missed ${times.length} calls from ${who} (last ${time(times[times.length - 1])}).`
+        : `You missed a call from ${who} (${time(times[0])}).`, 10000);
+    }
+  },
+
   // Someone used their one ping to reach us while we are on do-not-disturb.
   ping(m) {
     const user = state.users.get(m.from);
@@ -1410,6 +1424,7 @@ const handlers = {
     if (m.by === state.me.id) return;
     const text = {
       offline: 'They are offline right now.',
+      'not-friends': `You can only call friends. Add ${who} first.`,
       busy: `${who} is already in a call.`,
       declined: `${who} declined the call.`,
       cancelled: `You missed a call from ${who}.`,
@@ -1908,7 +1923,10 @@ function showNews() {
   }).catch(() => { newsLoading = null; });
 }
 
-// Between a guest and anyone else, messages and calls are for friends only (the server holds to this too).
+// Calls are for friends only: people who added each other (the server holds to this too).
+const isFriend = (user) => !!user && !!state.friends && state.friends.friends.includes(user.id);
+
+// Between a guest and anyone else, messages are for friends only (the server holds to this too).
 const reachable = (user) => !!user && !user.deleted && (!(user.guest || state.guest) || state.friends.friends.includes(user.id));
 
 // What a guest sees at the top of the sidebar: who can see them, the name to give friends, and the way in. Without a
@@ -2121,7 +2139,7 @@ function renderHead() {
     $('#headIcon').dataset.person = $('#headTitle').dataset.person = v.id;   // right-click: the user menu
     $('#headSub').textContent = [statusOf(user), noteOf(user)].filter(Boolean).join(' · ');
     actions.append(h('button', { class: 'ctl', type: 'button', title: 'Pinned messages', onclick: openPins }, icon('pin')));
-    if (!callAboveShown() && reachable(user)) {
+    if (!callAboveShown() && reachable(user) && isFriend(user)) {
       actions.append(h('button', { class: 'btn slim', type: 'button', title: `Call ${nick(user)}`, onclick: () => startCall(user.id) }, icon('phone'), 'Call'));
     }
   } else if (v.type === 'voice') {
@@ -3952,7 +3970,7 @@ function personActions(user) {
   if (user.id === state.me.id) { add('Edit profile', openSettings); return acts; }
   if (reachable(user)) {
     add('Message', () => openDM(user.id), 'primary');
-    if (user.online) add('Call', () => startCall(user.id));
+    if (isFriend(user)) add('Call', () => startCall(user.id));
   }
   add(...friendAction(user));
   if (state.nicknamesOn && state.friends.friends.includes(user.id)) add(state.nicknames.has(user.id) ? 'Change nickname' : 'Give a nickname', () => openNickname(user));
@@ -4192,7 +4210,7 @@ function renderFriends() {
   const friends = people(f.friends).sort((a, b) => b.online - a.online || a.name.localeCompare(b.name));
   section('Friends', friends, (u) => [
     button([icon('chat'), 'Message'], () => openDM(u.id)),
-    u.online ? button([icon('phone'), 'Call'], () => startCall(u.id)) : null,
+    button([icon('phone'), 'Call'], () => startCall(u.id)),
     // Nickname and Remove friend are in the right-click menu and on the profile card (personActions).
   ]);
   if (!f.friends.length && !f.incoming.length && !f.outgoing.length) {
@@ -4268,12 +4286,16 @@ function endCallUi() {
   updateTitle();
 }
 
+// A call, to a friend only. To an offline friend it rings anyway: on their phone, and on any device they open while it
+// rings (40 seconds); if nobody answers, they hear about it when they're next on.
 function startCall(id) {
   const user = state.users.get(id);
-  if (!user || !user.online) { toast(`${user ? nick(user) : 'That person'} is offline right now.`); return; }
+  if (!user) return;
+  if (!isFriend(user)) { toast(`You can only call friends. Add ${nick(user)} first.`); return; }
   if (state.call) { toast('Finish your current call first.'); return; }
   audio();   // this click unlocks sound for the ringing tone and the call
   send({ type: 'call-invite', to: id });
+  if (!user.online) toast(`${nick(user)} is offline. It rings on their phone, and if they open Umbryx in the next 40 seconds.`, 7000);
 }
 
 function answerCall(accept) {
