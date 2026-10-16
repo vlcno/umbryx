@@ -177,6 +177,8 @@ const ICONS = {
   headphones: '<path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4.5" height="6.5" rx="1.5"/><rect x="16.5" y="14" width="4.5" height="6.5" rx="1.5"/>',
   screen: '<rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16.5V20"/>',
   arrowRight: '<path d="M4 12h15M13 6l6 6-6 6"/>',
+  flag: '<path d="M5.5 21V4"/><path d="M5.5 4.5h11.5l-2.5 4 2.5 4H5.5"/>',
+  block: '<circle cx="12" cy="12" r="8.5"/><path d="M6 6l12 12"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="M10.9 12.1 20 3M16.5 6.5l3 3M14 9l2.5 2.5"/>',
   globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.4 3.5 5.2 3.5 8.5s-1.1 6.1-3.5 8.5c-2.4-2.4-3.5-5.2-3.5-8.5s1.1-6.1 3.5-8.5z"/>',
   mobile: '<rect x="7" y="3" width="10" height="18" rx="2.2"/><path d="M11 17.5h2"/>',
@@ -828,7 +830,7 @@ function notify(note) {
 }
 
 function notifyMessage(msg, where) {
-  if (!state.me || msg.uid === state.me.id || typeof msg.join === 'number') return;   // join lines don't notify
+  if (!state.me || msg.uid === state.me.id || typeof msg.join === 'number' || isBlocked(msg.uid)) return;   // nor join lines
   const mention = where.kind === 'text' && mentionsMe(msg.text);
   // A channel's own choice (right-click it): all, mentions, none; else the device's setting ("direct messages" still
   // hears mentions).
@@ -899,6 +901,8 @@ const handlers = {
     state.passkeyDomain = m.passkeyDomain || '';
     state.passkeyLink = !!m.passkeyLink;
     state.channelNotify = m.channelNotify || {};
+    state.blocked = new Set(Array.isArray(m.blocked) ? m.blocked : []);
+    state.reports = [];
     stopPasskeyWait();
     checkBuild(m.build);
     showServerLook(m);
@@ -1084,6 +1088,37 @@ const handlers = {
     for (const card of $$(`[data-invite-card="${CSS.escape(m.code)}"]`)) fillInviteCard(card);
   },
 
+  // Who this account blocked (see blockPerson): here or on another of its devices.
+  blocked(m) {
+    const before = state.blocked || new Set();
+    state.blocked = new Set(Array.isArray(m.blocked) ? m.blocked : []);
+    const name = (id) => nick(state.users.get(id) || { name: 'them' });
+    for (const id of state.blocked) if (!before.has(id)) toast(`You blocked ${name(id)}.`);
+    for (const id of before) if (!state.blocked.has(id)) toast(`You unblocked ${name(id)}.`);
+    renderSidebar();
+    renderMembers();
+    const box = $('#messages');
+    const y = box.scrollTop;
+    renderMain();   // their messages fold or open, and a direct message with them can or can't be written in
+    if (isConv()) { if (chat.stuck) toBottom(box); else box.scrollTop = y; }
+  },
+
+  'report-sent'(m) {
+    if ($('#reportDlg').open) $('#reportDlg').close();
+    toast(m.again ? "You've already reported that. The server's admins will take a look." : "Thanks for reporting. The server's admins will take a look.", 6000);
+  },
+
+  // Open reports, for admins (Server settings > Reports). new: one that just came in.
+  reports(m) {
+    const first = !state.reportsHeard;
+    state.reportsHeard = true;
+    state.reports = Array.isArray(m.reports) ? m.reports : [];
+    renderReports();
+    const fresh = m.new && state.reports.find((r) => r.id === m.new);
+    if (fresh) toast(`New report: ${fresh.byName} reported ${fresh.userName} (${REPORT_REASONS[fresh.reason] || 'other'}). See Server settings.`, 8000);
+    else if (first && state.reports.length) toast(`${state.reports.length === 1 ? 'There is 1 open report' : `There are ${state.reports.length} open reports`} in Server settings.`, 6000);
+  },
+
   // Who is banned, for admins (Server settings > Bans, and Unban in their menu).
   bans(m) {
     state.bans = Array.isArray(m.bans) ? m.bans : [];
@@ -1236,9 +1271,9 @@ const handlers = {
   chat(m) {
     const msg = m.message;
     const viewing = receive(msg.channel, msg);
-    const mention = msg.uid !== state.me.id && mentionsMe(msg.text);
+    const mention = msg.uid !== state.me.id && !isBlocked(msg.uid) && mentionsMe(msg.text);
     if (mention && (!viewing || outOfSight()) && !isDnd(self())) blip('message');
-    if (typeof msg.join === 'number') { /* someone joined: shown, never counted as unread */ }
+    if (typeof msg.join === 'number' || isBlocked(msg.uid)) { /* someone joined, or someone you blocked: never unread */ }
     else if (!viewing) {
       state.unread.set(msg.channel, (state.unread.get(msg.channel) || 0) + 1);
       if (mention) state.mentions.set(msg.channel, (state.mentions.get(msg.channel) || 0) + 1);
@@ -1390,7 +1425,10 @@ const handlers = {
     if (state.view.type === 'dm' && state.view.id === m.with && !outOfSight()) markDmRead(m.with);
   },
 
-  typing(m) { setTyping(m.dm ? 'dm:' + m.dm : m.channel, nick(userNamed(m.name) || { name: m.name }), !m.stop); },
+  typing(m) {
+    if (isBlocked(m.id)) return;
+    setTyping(m.dm ? 'dm:' + m.dm : m.channel, nick(userNamed(m.name) || { name: m.name }), !m.stop);
+  },
 
   'message-edited'(m) {
     const key = m.dm ? 'dm:' + m.dm : m.channel;
@@ -1937,9 +1975,10 @@ function showNews() {
 
 // Calls are for friends only: people who added each other (the server holds to this too).
 const isFriend = (user) => !!user && !!state.friends && state.friends.friends.includes(user.id);
+const isBlocked = (id) => !!id && !!state.blocked && state.blocked.has(id);   // someone this account blocked
 
 // Between a guest and anyone else, messages are for friends only (the server holds to this too).
-const reachable = (user) => !!user && !user.deleted && (!(user.guest || state.guest) || state.friends.friends.includes(user.id));
+const reachable = (user) => !!user && !user.deleted && !isBlocked(user.id) && (!(user.guest || state.guest) || state.friends.friends.includes(user.id));
 
 // What a guest sees at the top of the sidebar: who can see them, the name to give friends, and the way in. Without a
 // password that is Make an account (this device is otherwise the only way back in); with one, an invite code.
@@ -2151,6 +2190,7 @@ function renderHead() {
     $('#headIcon').dataset.person = $('#headTitle').dataset.person = v.id;   // right-click: the user menu
     $('#headSub').textContent = [statusOf(user), noteOf(user)].filter(Boolean).join(' · ');
     actions.append(h('button', { class: 'ctl', type: 'button', title: 'Pinned messages', onclick: openPins }, icon('pin')));
+    if (isBlocked(v.id)) actions.append(h('button', { class: 'btn slim', type: 'button', onclick: () => unblockPerson(user) }, 'Unblock'));
     if (!callAboveShown() && reachable(user) && isFriend(user)) {
       actions.append(h('button', { class: 'btn slim', type: 'button', title: `Call ${nick(user)}`, onclick: () => startCall(user.id) }, icon('phone'), 'Call'));
     }
@@ -2172,8 +2212,9 @@ function renderMain() {
   if (isConv()) {
     const name = v.type === 'dm' ? nick(state.users.get(v.id)) : '#' + ((channelById(v.id) || {}).name || '');
     const gone = v.type === 'dm' && !!(state.users.get(v.id) || {}).deleted;
-    $('#input').disabled = gone;
-    $('#input').placeholder = gone ? 'This account was deleted' : `Message ${name}`;
+    const blocked = v.type === 'dm' && isBlocked(v.id);
+    $('#input').disabled = gone || blocked;
+    $('#input').placeholder = gone ? 'This account was deleted' : blocked ? `You blocked ${name}. Unblock them to send messages.` : `Message ${name}`;
     renderMessages();
     renderTyping();
   } else if (v.type === 'voice') syncStage();
@@ -3044,8 +3085,20 @@ function joinEl(m) {
     h('div', { class: 'join-text' }, before, name, after, h('time', { text: stamp(m.ts) })));
 }
 
+// Messages someone you blocked wrote in a channel fold into a line; Show opens one (until the page reloads).
+const shownBlocked = new Set();
+function blockedEl(m, prev) {
+  const key = convKey() + ':' + m.id;
+  const el = h('div', { class: 'msg blocked-msg', dataset: { id: m.id } },
+    h('span', { class: 'blocked-mark' }, icon('block')),
+    h('span', { text: 'Blocked message' }),
+    h('button', { class: 'linkish', type: 'button', onclick: () => { shownBlocked.add(key); el.replaceWith(messageEl(m, prev)); } }, 'Show'));
+  return el;
+}
+
 function messageEl(m, prev, bare) {
   if (typeof m.join === 'number') return joinEl(m);
+  if (!bare && m.channel && isBlocked(m.uid) && !shownBlocked.has(convKey() + ':' + m.id)) return blockedEl(m, prev);
   const who = authorOf(m);
   const mine = m.uid === state.me.id;
   const editing = !bare && mine && !!state.editing && state.editing.id === m.id && state.editing.key === convKey();
@@ -3063,7 +3116,8 @@ function messageEl(m, prev, bare) {
     action('reply', 'Reply', () => startReply(m)),
     action('pin', m.pinned ? 'Unpin' : 'Pin', () => pinMessage(m, !m.pinned), m.pinned ? 'on' : ''),
     mine ? action('pencil', 'Edit', () => startEdit(m)) : null,
-    mine ? action('trash', 'Delete', () => deleteMessage(m), 'danger') : null);
+    !mine && who.id && !who.deleted ? action('flag', 'Report', () => openReport(who, m)) : null,
+    mine || (state.canManage && m.channel) ? action('trash', 'Delete', () => deleteMessage(m), 'danger') : null);
   const mentioned = !bare && !mine && !!m.text && mentionsMe(m.text);
   const row = { class: 'msg' + (compact ? ' compact' : '') + (editing ? ' editing' : '') + (mentioned ? ' mentioned' : ''), dataset: { id: m.id } };
   let el;
@@ -3095,6 +3149,8 @@ function messageEl(m, prev, bare) {
 const placeOf = (m) => (m.channel ? { channel: m.channel } : { dm: m.uid === state.me.id ? m.to : m.uid });
 
 function deleteMessage(m) {
+  // An admin deleting someone else's message in a channel is asked first; your own go at once.
+  if (m.uid !== state.me.id && !confirm(`Delete this message by ${nick(authorOf(m))}? Everyone stops seeing it.`)) return;
   send({ type: 'message-delete', id: m.id, ...placeOf(m) });
 }
 
@@ -3440,6 +3496,8 @@ function openServerSettings() {
   if (state.info.inviteOnly) { renderInvites(); send({ type: 'invites' }); }
   renderBans();
   send({ type: 'bans' });
+  renderReports();
+  send({ type: 'reports' });
   $('#serverDlg').showModal();
 }
 
@@ -4006,13 +4064,17 @@ function personActions(user) {
     add('Message', () => openDM(user.id), 'primary');
     if (isFriend(user)) add('Call', () => startCall(user.id));
   }
-  add(...friendAction(user));
+  if (!isBlocked(user.id)) add(...friendAction(user));
   if (state.nicknamesOn && state.friends.friends.includes(user.id)) add(state.nicknames.has(user.id) ? 'Change nickname' : 'Give a nickname', () => openNickname(user));
   if (user.guest && state.canManage) {
     add('Let into server', () => {
       if (confirm(`Let ${nick(user)} into the server? They will see its channels and members, and everyone will see them.`)) send({ type: 'admit', id: user.id });
     });
   }
+  // Anyone: report them to the admins, block them (or unblock).
+  add('Report', () => openReport(user), 'danger');
+  if (isBlocked(user.id)) add('Unblock', () => unblockPerson(user));
+  else add('Block', () => blockPerson(user), 'danger');
   // Admins: mute or deafen someone in voice, remove (kick) or ban them. The server refuses for admins and
   // canDeleteStaff accounts.
   if (state.canManage && !user.guest) {
@@ -4272,6 +4334,85 @@ function renderFriends() {
     root.append(h('div', { class: 'empty', text: state.guest ? `No friends yet. Add someone by their username above, or give them yours: ${state.me.name}.`
       : 'No friends yet. Add someone by username above, or click a name in the member list.' }));
   }
+  section('Blocked', people([...(state.blocked || [])]).filter((u) => !u.deleted), (u) => [button('Unblock', () => unblockPerson(u))]);
+}
+
+/* ---------- blocking and reporting ---------- */
+
+// Blocking: no direct messages, calls, pings or friend requests either way, no longer friends, their channel messages
+// folded away and their mentions quiet. They aren't told. The server keeps the list (see its on_block).
+function blockPerson(user) {
+  if (!confirm(`Block ${nick(user)}? You won't be friends any more, neither of you can message, call or friend-request the other, and their messages in channels are hidden for you. They aren't told.`)) return;
+  send({ type: 'block', id: user.id });
+}
+function unblockPerson(user) {
+  send({ type: 'unblock', id: user.id });
+}
+
+// Why someone is reported; the server has the same list (REPORT_REASONS), and so does the iPhone app.
+const REPORT_REASONS = {
+  spam: 'Spam', harassment: 'Harassment or bullying', hate: 'Hate speech', sexual: 'Sexual content',
+  violence: 'Violence or threats', 'self-harm': 'Self-harm', other: 'Something else',
+};
+let reporting = null;   // { user, message } the report dialog is about
+function openReport(user, message) {
+  reporting = { user, message: message || null };
+  $('#reportTitle').textContent = message ? `Report a message by ${nick(user)}` : `Report ${nick(user)}`;
+  const quote = $('#reportQuote');
+  quote.hidden = !message;
+  quote.replaceChildren(...(message ? [
+    message.text ? h('div', { class: 'report-quote-text', text: message.text.length > 300 ? message.text.slice(0, 300) + '…' : message.text }) : null,
+    ...(message.attachments || []).map((a) => h('div', { class: 'report-quote-file' }, icon('clip'), h('span', { text: a.name }))),
+  ].filter(Boolean) : []));
+  $('#reportReasons').replaceChildren(...Object.entries(REPORT_REASONS).map(([value, label]) => h('label', { class: 'report-reason' },
+    h('input', { type: 'radio', name: 'reportReason', value, required: true }), h('span', { text: label }))));
+  $('#reportText').value = '';
+  $('#reportBlock').checked = false;
+  $('#reportBlockRow').hidden = isBlocked(user.id);
+  $('#reportDlg').showModal();
+}
+$('#reportForm').addEventListener('submit', (event) => {
+  if (!event.submitter || event.submitter.value !== 'send' || !reporting) return;
+  event.preventDefault();   // closes once the server has it (handlers['report-sent'])
+  const picked = $('#reportForm').querySelector('input[name="reportReason"]:checked');
+  if (!picked) { toast('Pick why you are reporting.'); return; }
+  const { user, message } = reporting;
+  send({ type: 'report', id: user.id, reason: picked.value, text: $('#reportText').value.trim(),
+    ...(message ? { message: message.id, ...placeOf(message) } : {}) });
+  if ($('#reportBlock').checked && !isBlocked(user.id)) send({ type: 'block', id: user.id });
+});
+
+// Admins: the open reports (Server settings > Reports), newest first. A dot on the settings pencil while any are open.
+function renderReports() {
+  const list = state.reports || [];
+  const pencil = $('#serverEdit');
+  pencil.classList.toggle('alert', !!list.length);
+  pencil.title = list.length ? `Server settings · ${list.length} open report${list.length === 1 ? '' : 's'}` : 'Server settings';
+  $('#srvReports').hidden = !state.canManage;
+  $('#srvReportsHead').textContent = list.length ? `Reports · ${list.length}` : 'Reports';
+  const when = (ms) => new Date(ms).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const person = (id, name) => {
+    const user = state.users.get(id);
+    const el = h('button', { class: 'join-name', type: 'button', text: user && !user.deleted ? nick(user) : name, dataset: user ? { person: id } : {} });
+    if (user) el.addEventListener('click', () => openCard(user, el));
+    return el;
+  };
+  $('#reportList').replaceChildren(...(list.length ? list.map((r) => {
+    const msg = r.message;
+    return h('div', { class: 'report-row' },
+      h('div', { class: 'report-head' }, person(r.by, r.byName), ' reported ', person(r.user, r.userName),
+        h('span', { class: 'report-why', text: REPORT_REASONS[r.reason] || r.reason })),
+      h('div', { class: 'invite-meta', text: [msg ? `A message in ${r.where || 'a conversation'}` : 'Their account', when(r.at)].join(' · ') }),
+      msg ? h('div', { class: 'report-quote' },
+        msg.text ? h('div', { class: 'report-quote-text', text: msg.text }) : null,
+        ...(msg.attachments || []).map((a) => h('a', { class: 'report-quote-file', href: a.url, target: '_blank', rel: 'noopener' }, icon('clip'), h('span', { text: a.name })))) : null,
+      r.text ? h('div', { class: 'report-text', text: r.text }) : null,
+      h('div', { class: 'report-acts' },
+        msg && msg.channel ? h('button', { class: 'btn slim danger', type: 'button', onclick: () => {
+          if (confirm(`Delete ${r.userName}'s message from ${r.where}? Everyone stops seeing it. It stays in this report.`)) send({ type: 'message-delete', id: msg.id, channel: msg.channel });
+        } }, 'Delete message') : null,
+        h('button', { class: 'btn slim', type: 'button', title: 'Take it off the list, for every admin', onclick: () => send({ type: 'report-close', id: r.id }) }, 'Done')));
+  }) : [h('div', { class: 'chan-empty', text: 'No open reports.' })]));
 }
 
 $('#friendForm').addEventListener('submit', (event) => {

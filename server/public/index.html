@@ -429,6 +429,10 @@
       <div class="invite-list" id="invList"></div>
       <small class="hint">New accounts start in direct messages. With a code, people join the server when they make their account, or later from the top of their sidebar.</small>
     </div>
+    <div class="field srv-reports" id="srvReports" hidden><span id="srvReportsHead">Reports</span>
+      <div class="invite-list" id="reportList"></div>
+      <small class="hint">What people reported to the admins. Delete a reported channel message here; kick or ban someone from the menu on their name. Done takes a report off the list for every admin.</small>
+    </div>
     <div class="field srv-bans" id="srvBans" hidden><span>Bans</span>
       <div class="invite-list" id="banList"></div>
       <small class="hint">Banned people are out of the server, and no invite code lets them back in until you unban them. They keep their account and their direct messages with friends. Ban, mute or deafen someone from the menu on their name.</small>
@@ -546,6 +550,22 @@
       <span class="spacer"></span>
       <button class="btn" value="cancel" formnovalidate>Cancel</button>
       <button class="btn danger" value="delete" id="deleteGo" disabled>Delete my account</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="reportDlg" class="dlg small">
+  <form method="dialog" id="reportForm">
+    <h3 id="reportTitle">Report</h3>
+    <div class="report-quote" id="reportQuote" hidden></div>
+    <p class="hint">Your report goes to the server's admins, with your name. The person you report isn't told.</p>
+    <div class="report-reasons" id="reportReasons" role="radiogroup" aria-label="Why are you reporting?"></div>
+    <label class="field"><span>Anything else the admins should know? (optional)</span><textarea id="reportText" maxlength="1000" rows="3"></textarea></label>
+    <label class="check" id="reportBlockRow"><input type="checkbox" id="reportBlock"><span>Also block them</span></label>
+    <div class="dlg-actions">
+      <span class="spacer"></span>
+      <button class="btn" value="cancel" formnovalidate>Cancel</button>
+      <button class="btn danger" value="send">Send report</button>
     </div>
   </form>
 </dialog>

@@ -2,6 +2,16 @@
   "about": "What changed in Umbryx, newest first. The Home screen of the website and the desktop app shows the first three. Add an entry for every update.",
   "updates": [
     {
+      "date": "2026-10-16",
+      "title": "Report and block",
+      "added": [
+        "Block someone from the menu on their name: no more messages, calls or friend requests between you, and their messages in channels are hidden for you. Your blocked list is in Friends.",
+        "Report someone, or one of their messages (the flag when you hover it), to the server's admins. Admins see open reports in Server settings, and can delete a reported message.",
+        "Admins can delete anyone's message in a channel (hover it, then the bin)."
+      ],
+      "fixed": []
+    },
+    {
       "date": "2026-10-15",
       "title": "The website matches the app",
       "added": [

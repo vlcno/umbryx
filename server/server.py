@@ -107,6 +107,13 @@ MAX_FAVORITES = 300
 PBKDF2_ROUNDS = 240_000
 RING_SECONDS = 40
 JOIN_KINDS = 12      # how many join greetings the apps know (the page's JOIN_TEXTS); the server picks one
+MAX_BLOCKED = 1000   # how many people one account can block
+# Why someone is reported (see on_report), and how a push to the admins words it.
+REPORT_REASONS = {"spam": "Spam", "harassment": "Harassment or bullying", "hate": "Hate speech",
+                  "sexual": "Sexual content", "violence": "Violence or threats", "self-harm": "Self-harm",
+                  "other": "Something else"}
+REPORTS_PER_HOUR = 10   # per account
+REPORT_KEEP_DAYS = 90   # closed reports are kept this long, then go
 # The desktop app's updates. A version is only accepted, and the app only installs it, when its description is
 # signed with the publisher's private key; this is the public half, which can check a signature but not make one.
 UPDATE_KEY = base64.b64decode("hOjCJhEHyp0qFTcFaDyoitsgiT/fAMSnUJp3em6YgRA=")
@@ -1045,6 +1052,11 @@ class Hub:
         with contextlib.suppress(OSError, ValueError):
             saved = json.loads((DATA / "invites.json").read_text("utf-8"))
             self.invites = [x for x in saved if isinstance(x, dict) and x.get("code")]
+        self.reports = []      # reports to the admins (see on_report); closed ones are kept a while (REPORT_KEEP_DAYS)
+        with contextlib.suppress(OSError, ValueError):
+            saved = json.loads((DATA / "reports.json").read_text("utf-8"))
+            self.reports = [x for x in saved if isinstance(x, dict) and x.get("id")]
+        self.report_times = {}   # account id -> when it sent its reports this past hour
         self.embed_cache = {}  # (kind, id) -> (until, preview or None): link previews looked up lately
         self.embed_lookups = {}   # (kind, id) -> the lookup under way, shared by everyone asking meanwhile
         self.passkey_asks = {}    # challenge -> {"exp", "rp", "kind", "uid"}: passkey requests waiting for an answer
@@ -1091,6 +1103,8 @@ class Hub:
             "redeem": self.on_redeem, "invites": self.on_invites, "invite-create": self.on_invite_create,
             "invite-delete": self.on_invite_delete, "account-delete": self.on_account_delete, "kick": self.on_kick,
             "nickname": self.on_nickname,
+            "block": self.on_block, "unblock": self.on_unblock, "report": self.on_report, "reports": self.on_reports,
+            "report-close": self.on_report_close,
         }
 
     # storage
@@ -1182,7 +1196,8 @@ class Hub:
             return "all"
         if rec["id"] in viewer["friends"] or rec["id"] in viewer["incoming"]:
             return "all"
-        return "name" if rec["id"] in viewer["outgoing"] else None
+        # Someone you asked shows only their name until they say yes; so does someone you blocked (to unblock them).
+        return "name" if rec["id"] in viewer["outgoing"] or rec["id"] in (viewer.get("blocked") or ()) else None
 
     def public_for(self, viewer, rec):
         """public(rec) as viewer may see it (see seen_by), or None."""
@@ -1198,9 +1213,15 @@ class Hub:
         return shown
 
     @staticmethod
+    def blocks(rec, other):
+        """Whether either of the two has blocked the other (see on_block)."""
+        return other["id"] in (rec.get("blocked") or ()) or rec["id"] in (other.get("blocked") or ())
+
+    @staticmethod
     def may_reach(rec, other):
-        """Whether rec may message or call other: anyone, between members; with a guest, only friends."""
-        if rec.get("deleted") or other.get("deleted"):
+        """Whether rec may message or call other: anyone, between members; with a guest, only friends. Never when
+        either has blocked the other."""
+        if rec.get("deleted") or other.get("deleted") or Hub.blocks(rec, other):
             return False
         return not (rec.get("guest") or other.get("guest")) or other["id"] in rec["friends"]
 
@@ -2207,9 +2228,12 @@ class Hub:
             "push": bool(self._push_ready()),      # whether the iPhone app can have push notifications here
             # Per channel: "all", "mentions" or "none" (unset: the device's own default; pushes: mentions).
             "channelNotify": rec.get("channelNotify") or {},
+            "blocked": rec.get("blocked") or [],   # who this account blocked (see on_block)
             "canManage": self.can_manage(rec), "build": page_build(),
             "iceServers": self.cfg["iceServers"], "maxUploadMB": self.cfg["maxUploadMB"],
         })
+        if self.can_manage(rec):
+            self._send_reports(c)   # the open reports, so the admin's apps can say there are some
         # Calls that rang while this account was nowhere on, and nobody answered.
         if rec.get("missedCalls"):
             c.send({"type": "missed-calls", "calls": rec.pop("missedCalls")})
@@ -2533,6 +2557,9 @@ class Hub:
             return
         if target is me or target["id"] in me["friends"] or target["id"] in me["outgoing"]:
             return
+        if self.blocks(me, target):
+            self._say_blocked(c, target, "Unblock them to add them as a friend.", "Your friend request couldn't be sent.")
+            return
         if target["id"] in me["incoming"]:      # they already asked: this is a yes
             self._befriend(me, target)
         else:
@@ -2543,7 +2570,7 @@ class Hub:
 
     def on_friend_accept(self, c, m):
         me, target = c.user, self.users.get(m.get("id"))
-        if target and target["id"] in me["incoming"]:
+        if target and target["id"] in me["incoming"] and not self.blocks(me, target):
             self._befriend(me, target)
             self._push_friends(me, target)
 
@@ -2557,6 +2584,142 @@ class Hub:
                 if other["id"] in one[key]:
                     one[key].remove(other["id"])
         self._push_friends(me, target)
+
+    # blocking and reporting
+
+    def _say_blocked(self, c, other, blocker_text, blocked_text):
+        """c tried to reach someone, and one of them blocked the other. The one who blocked is told to unblock first;
+        the one blocked only that it didn't go through, as in Discord: nothing says they were blocked."""
+        if other["id"] in (c.user.get("blocked") or ()):
+            c.send({"type": "error", "code": "blocked", "id": other["id"], "message": "You blocked %s. %s" % (other["name"], blocker_text)})
+        else:
+            c.send({"type": "error", "code": "undelivered", "id": other["id"], "message": blocked_text})
+
+    def _send_blocked(self, rec):
+        self.send_to(rec["id"], {"type": "blocked", "blocked": rec.get("blocked") or []})
+
+    def on_block(self, c, m):
+        """Block someone: no more direct messages, calls, pings or friend requests either way, and you are no longer
+        friends (requests either way go too). The apps hide their channel messages behind "Blocked message", and their
+        @mentions and replies don't notify you. Your direct messages so far stay readable. They aren't told."""
+        me, target = c.user, self.users.get(m.get("id"))
+        if not target or target is me or target.get("deleted"):
+            return
+        blocked = me.setdefault("blocked", [])
+        if target["id"] in blocked:
+            return
+        if len(blocked) >= MAX_BLOCKED:
+            c.send({"type": "error", "code": "block-limit", "message": "You can block up to %d people." % MAX_BLOCKED})
+            return
+        blocked.append(target["id"])
+        for one, other in ((me, target), (target, me)):
+            for key in ("friends", "incoming", "outgoing"):
+                if other["id"] in one[key]:
+                    one[key].remove(other["id"])
+        for call in [x for x in self.calls.values() if {x["from"], x["to"]} == {me["id"], target["id"]}]:
+            self._end_call(call, "ended", by=c)
+        log("%s blocked %s" % (me["name"], target["name"]))
+        self._push_friends(me, target)   # saves
+        self._send_blocked(me)
+
+    def on_unblock(self, c, m):
+        blocked = c.user.get("blocked") or []
+        if m.get("id") in blocked:
+            blocked.remove(m["id"])
+            other = self.users.get(m["id"])
+            log("%s unblocked %s" % (c.name, (other or {}).get("name", "someone")))
+            if other:
+                self._push_friends(c.user, other)   # saves; between a guest and someone else, out of sight again
+            else:
+                self._save_users()
+            self._send_blocked(c.user)
+
+    def on_report(self, c, m):
+        """Report someone to the server's admins, or one of their messages (message: its id, with channel, or dm: the
+        other person in a direct message the reporter is in): why (reason, one of REPORT_REASONS) and, if they like,
+        more words (text). The message is copied into the report as it is now, so deleting it later doesn't hide it."""
+        me = c.user
+        reason = m.get("reason")
+        if reason not in REPORT_REASONS:
+            return
+        msg = ch = None
+        if m.get("message") is not None:
+            found = self._conversation(c, m)
+            if not found:
+                return
+            msgs, _path, _other, ch = found
+            msg = next((x for x in msgs if x["id"] == m.get("message")), None)
+            if not msg or not msg.get("uid") or isinstance(msg.get("join"), int):
+                return
+        target = self.users.get(msg["uid"] if msg else m.get("id"))
+        if not target or target is me or target.get("deleted"):
+            return
+        now = time.time()
+        recent = [t for t in self.report_times.get(me["id"], ()) if now - t < 3600]
+        if len(recent) >= REPORTS_PER_HOUR:
+            c.send({"type": "error", "code": "slow-down", "message": "You've sent a lot of reports lately. Try again in a while."})
+            return
+        if any(not r.get("closed") and r["by"] == me["id"] and r["user"] == target["id"]
+               and (r.get("message") or {}).get("id") == (msg["id"] if msg else None) for r in self.reports):
+            c.send({"type": "report-sent", "again": True})   # already reported, and still open
+            return
+        self.report_times[me["id"]] = recent + [now]
+        report = {"id": secrets.token_hex(6), "at": int(now * 1000), "by": me["id"], "byName": me["name"],
+                  "user": target["id"], "userName": target["name"], "reason": reason, "text": clean_block(m.get("text"), 1000)}
+        if msg:
+            report["message"] = {"id": msg["id"], "ts": msg["ts"], "text": msg.get("text", ""),
+                                 "attachments": [dict(a) for a in msg.get("attachments", ())]}
+            if ch:
+                report["message"]["channel"] = ch["id"]
+                report["where"] = "#" + ch["name"]
+            else:
+                report["message"]["dm"] = True
+                report["where"] = "a direct message"
+        self.reports.append(report)
+        self._save_reports()
+        log("%s reported %s (%s)" % (me["name"], target["name"], reason))
+        c.send({"type": "report-sent"})
+        self._send_reports(new=report)
+        for admin in self.users.values():
+            if admin is not target and admin is not me and not admin.get("deleted") and self.can_manage(admin):
+                self.notify(admin, "New report", "%s reported %s: %s" % (me["name"], target["name"], REPORT_REASONS[reason]),
+                            {"kind": "report", "report": report["id"]}, thread="reports")
+
+    def _save_reports(self):
+        cutoff = (time.time() - REPORT_KEEP_DAYS * 86400) * 1000
+        kept = [r for r in self.reports if not ((r.get("closed") or {}).get("at", cutoff) < cutoff)]
+        kept = kept[-1000:]
+        gone = [a["url"] for r in self.reports if r not in kept for a in (r.get("message") or {}).get("attachments", ())]
+        self.reports = kept
+        write_json(DATA / "reports.json", self.reports)
+        self._release_uploads(gone)
+
+    def _send_reports(self, only=None, new=None):
+        """The open reports, newest first, to every admin's devices (or only to one asking); nobody sees reports about
+        themselves. new: the report just made, so the apps can say so."""
+        shown = sorted((r for r in self.reports if not r.get("closed")), key=lambda r: -r["at"])
+        for client in ([only] if only else self.everyone()):
+            if self.can_manage(client.user):
+                event = {"type": "reports", "reports": [r for r in shown if r["user"] != client.id]}
+                if new and client.id not in (new["user"], new["by"]):
+                    event["new"] = new["id"]
+                client.send(event)
+
+    def on_reports(self, c, m):
+        if self.can_manage(c.user):
+            self._send_reports(c)
+
+    def on_report_close(self, c, m):
+        """An admin is done with a report (dealt with it, or nothing to do): off everyone's list."""
+        if not self.can_manage(c.user):
+            return
+        report = next((r for r in self.reports if r["id"] == m.get("id") and not r.get("closed")), None)
+        if not report or report["user"] == c.id:
+            return
+        report["closed"] = {"by": c.id, "byName": c.name, "at": int(time.time() * 1000)}
+        self._save_reports()
+        log("%s closed %s's report about %s" % (c.name, report["byName"], report["userName"]))
+        self._send_reports()
 
     # channel messages
 
@@ -2581,7 +2744,7 @@ class Hub:
         # A push to whoever is @mentioned or replied to (not the writer, not guests: they cannot see channels).
         replied = (reply or {}).get("uid")
         for rec in self.users.values():
-            if rec is c.user or rec.get("guest") or rec.get("deleted"):
+            if rec is c.user or rec.get("guest") or rec.get("deleted") or c.id in (rec.get("blocked") or ()):
                 continue
             level = (rec.get("channelNotify") or {}).get(ch["id"], "mentions")   # see on_channel_notify
             if level == "none":
@@ -2635,6 +2798,9 @@ class Hub:
 
     def on_dm_send(self, c, m):
         target = self.users.get(m.get("to"))
+        if target and target is not c.user and not target.get("deleted") and self.blocks(c.user, target):
+            self._say_blocked(c, target, "Unblock them to send them messages.", "Your message couldn't be delivered.")
+            return
         if not target or target is c.user or not self.may_reach(c.user, target) or self.too_fast(c):
             return
         text = clean_block(m.get("text"), 4000)
@@ -2658,7 +2824,8 @@ class Hub:
 
     def on_dm_history(self, c, m):
         other = self.users.get(m.get("with"))
-        if other and (other.get("deleted") or self.may_reach(c.user, other)):   # a deleted account's old messages stay readable
+        # A deleted account's old messages stay readable, and so do someone's you blocked (or who blocked you).
+        if other and (other.get("deleted") or self.may_reach(c.user, other) or self.blocks(c.user, other)):
             msgs = self.dms.get(self._dm_key(c.id, other["id"]), [])
             c.send({"type": "dm-history", "with": other["id"], **self._page(msgs, m.get("before"))})
 
@@ -2682,6 +2849,7 @@ class Hub:
             urls -= {f["url"] for f in rec.get("favorites", ())}
         urls -= {e["url"] for e in self.emojis}
         urls -= {self.cfg.get("serverIcon", ""), self.cfg.get("serverBanner", "")}
+        urls -= {a["url"] for r in self.reports for a in (r.get("message") or {}).get("attachments", ())}
         for url in urls:
             hit = UPLOAD_URL.match(url)
             if hit:
@@ -2721,14 +2889,17 @@ class Hub:
             self.broadcast({**event, "channel": ch["id"]})
 
     def on_message_delete(self, c, m):
-        """Delete one of your own messages, from a channel or from a direct message thread."""
+        """Delete one of your own messages, from a channel or from a direct message thread. The server's admins may
+        delete anyone's in a channel (a reported one, say)."""
         found = self._conversation(c, m)
         if not found:
             return
         msgs, path, other, ch = found
         msg = next((x for x in msgs if x["id"] == m.get("id")), None)
-        if not msg or msg.get("uid") != c.id:
+        if not msg or (msg.get("uid") != c.id and not (ch and self.can_manage(c.user))):
             return
+        if msg.get("uid") != c.id:
+            log("%s deleted a message by %s in #%s" % (c.name, msg.get("name", "someone"), ch["name"]))
         msgs.remove(msg)
         self._rewrite(path, msgs)
         self._release_uploads(a["url"] for a in msg.get("attachments", ()))
