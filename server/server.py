@@ -990,6 +990,8 @@ class Client:
         self.device = "web"                      # "desktop", "web" or "mobile" (see device_of and on_auth)
         self.host = ""                           # the address it came to (for passkeys, see Hub.passkey_domain)
         self.background = False                  # the phone app is in the background (app-state): push to it
+        self.session_key = ""                    # token_hash of the sign-in session it uses (push tokens belong to it)
+        self.passkey_create = None               # its last "add a passkey" challenge (a new one replaces it)
         self.activities = []                     # what its person is playing, heard by this device (on_activity)
         self.activities_at = 0.0
         self.since = self.last_seen = time.monotonic()
@@ -1075,7 +1077,7 @@ class Hub:
             "server-mute": self.on_server_mute, "server-deafen": self.on_server_deafen,
             "ban": self.on_ban, "unban": self.on_unban, "bans": self.on_bans, "invite-info": self.on_invite_info,
             "passkey-begin": self.on_passkey_begin, "passkey-finish": self.on_passkey_finish,
-            "passkey-remove": self.on_passkey_remove, "passkey-link": self.on_passkey_link, "push-token": self.on_push_token, "app-state": self.on_app_state,
+            "passkey-remove": self.on_passkey_remove, "passkey-link": self.on_passkey_link, "channel-notify": self.on_channel_notify, "push-token": self.on_push_token, "app-state": self.on_app_state,
             "friend-add": self.on_friend_add, "friend-accept": self.on_friend_accept,
             "friend-remove": self.on_friend_remove,
             "voice-join": self.on_voice_join, "voice-leave": self.on_voice_leave, "voice-flags": self.on_voice_flags,
@@ -1413,6 +1415,7 @@ class Hub:
             rec = self.users.get(self.sessions.get(token_hash(m.get("session"))))
             if not rec:
                 self._auth_error(c, "bad-session", "Please sign in again.")
+            c.session_key = token_hash(m.get("session"))
         elif mode == "auto":
             rec = self.auto_account() if c.local else None
             if not rec:
@@ -1459,11 +1462,12 @@ class Hub:
             return
         if mode != "resume":
             session = secrets.token_urlsafe(32)
-            self.sessions[token_hash(session)] = rec["id"]
+            c.session_key = token_hash(session)
+            self.sessions[c.session_key] = rec["id"]
             # Browsers that were closed without signing out leave tokens behind: keep the newest ten per account.
             mine = [key for key, uid in self.sessions.items() if uid == rec["id"]]
             for key in mine[:-10]:
-                del self.sessions[key]
+                self.forget_session(key)
             self._save_users()
         if m.get("client") in DEVICES:   # what it is, said by itself (newer pages and phone apps)
             c.device = m["client"]
@@ -1610,7 +1614,10 @@ class Hub:
 
     def on_passkey_begin(self, c, m):
         """Settings asks to add a passkey: what the device needs to make one for this account."""
+        if c.passkey_create:
+            self.passkey_asks.pop(c.passkey_create, None)   # Settings opened again: the last one was never used
         options = self._passkey_options(c.user, self.passkey_domain(c.host))
+        c.passkey_create = options["challenge"] if options else None
         c.send({"type": "passkey-options", **({"options": options} if options else {"error": "Passkeys don't work at this address."})})
 
     def _passkey_options(self, rec, domain):
@@ -1707,6 +1714,20 @@ class Hub:
 
     # push notifications (the iPhone app)
 
+    def on_channel_notify(self, c, m):
+        """Which messages in a text channel notify this account: "all", "mentions" (@mentions and replies) or "none";
+        "default" goes back to the device's own setting. Kept on the account; all its devices hear."""
+        ch, level = self.channel(m.get("channel"), "text"), m.get("level")
+        if not ch or level not in ("all", "mentions", "none", "default") or c.user.get("guest"):
+            return
+        chosen = c.user.setdefault("channelNotify", {})
+        if level == "default":
+            chosen.pop(ch["id"], None)
+        else:
+            chosen[ch["id"]] = level
+        self._save_users()
+        self.send_to(c.id, {"type": "channel-notify", "channelNotify": chosen})
+
     def on_push_token(self, c, m):
         """The iPhone app's device token for push notifications ("remove": true when it signs out or turns them off).
         A device belongs to one account at a time."""
@@ -1718,7 +1739,8 @@ class Hub:
                 rec["pushTokens"] = [t for t in rec["pushTokens"] if t.get("token") != token]
         if m.get("remove") is not True:
             tokens = c.user.setdefault("pushTokens", [])
-            tokens.append({"token": token, "sandbox": m.get("sandbox") is True, "added": int(time.time() * 1000)})
+            tokens.append({"token": token, "sandbox": m.get("sandbox") is True, "added": int(time.time() * 1000),
+                           "session": c.session_key})
             del tokens[:-10]
         self._save_users()
 
@@ -1779,9 +1801,12 @@ class Hub:
             aps["thread-id"] = thread
         if call or ping:
             aps["interruption-level"] = "time-sensitive"
-        payload = {"aps": aps, "umbryx": data}
+        # Which server it came from, so a phone with several opens the right one.
+        payload = {"aps": aps, "umbryx": {**data, "server": app_address(self.cfg)}}
         loop = asyncio.get_running_loop()
         for entry in list(tokens):
+            if entry.get("session") and entry["session"] not in self.sessions:
+                continue   # registered by a sign-in that has ended (forget_session normally removes these)
             sandbox = entry.get("sandbox", sandbox_default)
             job = loop.run_in_executor(None, push.send, entry["token"], payload, bundle, token, sandbox, "alert", 10, collapse)
             job.add_done_callback(lambda done, rec=rec, entry=entry: self._pushed(rec, entry, done))
@@ -2155,6 +2180,8 @@ class Hub:
             "passkeys": self._passkey_list(rec), "passkeyDomain": self.passkey_domain(c.host),
             "passkeyLink": bool(self._passkey_link_domain(c)),   # a passkey can be added in a browser (passkey-link)
             "push": bool(self._push_ready()),      # whether the iPhone app can have push notifications here
+            # Per channel: "all", "mentions" or "none" (unset: the device's own default; pushes: mentions).
+            "channelNotify": rec.get("channelNotify") or {},
             "canManage": self.can_manage(rec), "build": page_build(),
             "iceServers": self.cfg["iceServers"], "maxUploadMB": self.cfg["maxUploadMB"],
         })
@@ -2174,8 +2201,17 @@ class Hub:
             if self.devices_of(rec["id"]) != was_on:   # a kind of device they were not on yet
                 self.broadcast({"type": "user-update", "user": self.public(rec)})
 
+    def forget_session(self, key):
+        """A sign-in session stops working (signed out, forgotten, or pushed out by newer ones); the push tokens
+        registered with it go too, so a phone that signed out gets no more notifications."""
+        uid = self.sessions.pop(key, None)
+        rec = self.users.get(uid) if uid else None
+        if rec and rec.get("pushTokens"):
+            rec["pushTokens"] = [t for t in rec["pushTokens"] if t.get("session") != key]
+        return uid
+
     def on_logout(self, c, m):
-        self.sessions.pop(token_hash(m.get("session")), None)
+        self.forget_session(token_hash(m.get("session")))
         token = str(m.get("pushToken") or "").lower()
         if token and c.user:
             c.user["pushTokens"] = [t for t in c.user.get("pushTokens", []) if t.get("token") != token]
@@ -2522,9 +2558,18 @@ class Hub:
         for rec in self.users.values():
             if rec is c.user or rec.get("guest") or rec.get("deleted"):
                 continue
-            if rec["id"] == replied or (text and re.search(r"(?<![\w@])@" + re.escape(rec["name"]) + r"(?![\w])", text, re.I)):
+            level = (rec.get("channelNotify") or {}).get(ch["id"], "mentions")   # see on_channel_notify
+            if level == "none":
+                continue
+            if rec["id"] == replied:
+                self.notify(rec, "%s replied" % self._shown_name(rec, c.user), self._push_text(msg) if text else "[attachment]",
+                            {"kind": "mention", "channel": ch["id"], "id": msg["id"], "reply": True}, thread="ch-" + ch["id"])
+            elif text and re.search(r"(?<![\w@])@" + re.escape(rec["name"]) + r"(?![\w])", text, re.I):
                 self.notify(rec, "%s in #%s" % (self._shown_name(rec, c.user), ch["name"]), self._push_text(msg),
                             {"kind": "mention", "channel": ch["id"], "id": msg["id"]}, thread="ch-" + ch["id"])
+            elif level == "all":
+                self.notify(rec, "%s in #%s" % (self._shown_name(rec, c.user), ch["name"]), self._push_text(msg),
+                            {"kind": "message", "channel": ch["id"], "id": msg["id"]}, thread="ch-" + ch["id"])
 
     def on_history(self, c, m):
         ch = self.channel(m.get("channel"), "text")
@@ -2588,7 +2633,7 @@ class Hub:
 
     def on_dm_history(self, c, m):
         other = self.users.get(m.get("with"))
-        if other and self.may_reach(c.user, other):
+        if other and (other.get("deleted") or self.may_reach(c.user, other)):   # a deleted account's old messages stay readable
             msgs = self.dms.get(self._dm_key(c.id, other["id"]), [])
             c.send({"type": "dm-history", "with": other["id"], **self._page(msgs, m.get("before"))})
 
@@ -3207,7 +3252,7 @@ async def handle_forget(hub, req, reader, writer):
         length = int(req.headers.get("content-length", "0"))
         if 0 < length <= 2048:
             body = json.loads(await asyncio.wait_for(reader.readexactly(length), 10))
-    if isinstance(body, dict) and hub.sessions.pop(token_hash(body.get("session")), None):
+    if isinstance(body, dict) and hub.forget_session(token_hash(body.get("session"))):
         hub._save_users()
     await respond_json(writer, 200, {})
 
@@ -3281,7 +3326,10 @@ async def handle_http(hub, req, reader, writer):
             if not ids:
                 return await respond(writer, 404, "Not found")
             return await respond_json(writer, 200, {"webcredentials": {"apps": ids},
-                                                     "applinks": {"details": [{"appIDs": ids, "components": [{"/": "/????????", "comment": "invite links"}]}]}})
+                                                     "applinks": {"details": [{"appIDs": ids, "components": [
+                                                         {"/": "/api/*", "exclude": True}, {"/": "/uploads/*", "exclude": True},
+                                                         {"/": "/updates/*", "exclude": True}, {"/": "/*.*", "exclude": True},
+                                                         {"/": "/????????", "comment": "invite links"}]}]}})
         if path.startswith("/uploads/"):
             return await serve_file(writer, req, UPLOADS, path[len("/uploads/"):], upload=True)
         if path.startswith("/updates/"):   # the desktop app's updates; each app checks the signature itself

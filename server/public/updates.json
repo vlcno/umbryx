@@ -25,7 +25,8 @@
         "Post an invite link in a chat and it shows a card with the server and a Join button, like Discord.",
         "Passkeys: sign in with your face, fingerprint or PIN. Add one in Settings, under Profile.",
         "Skip for now is gone: everyone makes an account. An invite code is still optional.",
-        "Calls are for friends only, and calling a friend who's offline rings anyway: on their phone, and when they open Umbryx. A call they missed is waiting for them."
+        "Calls are for friends only, and calling a friend who's offline rings anyway: on their phone, and when they open Umbryx. A call they missed is waiting for them.",
+        "Right-click a text channel to choose its notifications: All messages, Only @mentions or Nothing. It follows you to every device and your phone."
       ],
       "fixed": [
         "Chats stay at the newest message instead of drifting up.",

@@ -829,7 +829,11 @@ function notify(note) {
 function notifyMessage(msg, where) {
   if (!state.me || msg.uid === state.me.id) return;
   const mention = where.kind === 'text' && mentionsMe(msg.text);
-  if (where.kind === 'text' && settings.notify !== 'all' && !mention) return;   // "direct messages" still hears mentions
+  // A channel's own choice (right-click it): all, mentions, none; else the device's setting ("direct messages" still
+  // hears mentions).
+  const level = where.kind === 'text' ? (state.channelNotify || {})[where.id] : null;
+  if (level === 'none') return;
+  if (where.kind === 'text' && !mention && (level ? level !== 'all' : settings.notify !== 'all')) return;
   const from = state.users.get(msg.uid);
   const channel = where.kind === 'text' ? channelById(where.id) : null;
   const name = from ? nick(from) : 'Someone';
@@ -893,6 +897,7 @@ const handlers = {
     state.passkeys = Array.isArray(m.passkeys) ? m.passkeys : [];
     state.passkeyDomain = m.passkeyDomain || '';
     state.passkeyLink = !!m.passkeyLink;
+    state.channelNotify = m.channelNotify || {};
     stopPasskeyWait();
     checkBuild(m.build);
     showServerLook(m);
@@ -1059,6 +1064,10 @@ const handlers = {
   'passkey-options'(m) {
     passkeyMake = m.error ? null : m.options || null;
   },
+  'channel-notify'(m) {
+    state.channelNotify = m.channelNotify || {};
+  },
+
   'passkey-link'(m) {
     passkeyLinkToken = m.error ? null : m.token || null;
   },
@@ -1980,7 +1989,7 @@ function channelRow(ch) {
   if (state.view.type !== 'dm' && state.view.id === ch.id) classes.push('active');
   if (unread) classes.push('unread');
   if (rtc.channel === ch.id) classes.push('connected');
-  const row = h('div', { class: classes.join(' ') },
+  const row = h('div', { class: classes.join(' '), dataset: isText ? { channelMenu: ch.id } : {} },
     h('button', { class: 'chan-main', type: 'button', onclick: () => (isText ? openText(ch.id) : openVoice(ch.id)),
       title: isText ? '' : rtc.channel === ch.id ? 'Open the voice window' : 'Join voice' },
       icon(isText ? 'hash' : 'speaker'),
@@ -4037,6 +4046,27 @@ document.addEventListener('contextmenu', (event) => {
       if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(user.name).then(() => toast('Username copied.'), () => {});
     }),
     ...(risky.length ? [h('div', { class: 'pm-sep' }), ...risky.map((a) => item(a.label, a.run, a.cls))] : []));
+  document.body.append(personMenu);
+  const box = personMenu.getBoundingClientRect();
+  personMenu.style.left = Math.max(8, Math.min(event.clientX, innerWidth - box.width - 8)) + 'px';
+  personMenu.style.top = Math.max(8, Math.min(event.clientY, innerHeight - box.height - 8)) + 'px';
+});
+// Right-clicking a text channel: which of its messages notify you (kept on your account, for all your devices and
+// your phone).
+document.addEventListener('contextmenu', (event) => {
+  const el = event.target instanceof Element ? event.target.closest('[data-channel-menu]') : null;
+  const ch = el && state.me && !state.guest ? channelById(el.dataset.channelMenu) : null;
+  if (!ch) return;
+  event.preventDefault();
+  closePersonMenu();
+  const now = (state.channelNotify || {})[ch.id] || '';
+  const choose = (level) => { closePersonMenu(); send({ type: 'channel-notify', channel: ch.id, level }); };
+  const item = (level, label) => h('button', { class: 'pm-item' + (now === level ? ' pm-on' : ''), type: 'button', role: 'menuitemradio',
+    'aria-checked': String(now === level), onclick: () => choose(level) }, label);
+  personMenu = h('div', { class: 'person-menu', role: 'menu', 'aria-label': `#${ch.name} notifications` },
+    h('div', { class: 'pm-head', text: `#${ch.name} · Notifications` }),
+    item('all', 'All messages'), item('mentions', 'Only @mentions'), item('none', 'Nothing'),
+    ...(now ? [h('div', { class: 'pm-sep' }), item('default', 'Use my default')] : []));
   document.body.append(personMenu);
   const box = personMenu.getBoundingClientRect();
   personMenu.style.left = Math.max(8, Math.min(event.clientX, innerWidth - box.width - 8)) + 'px';

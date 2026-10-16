@@ -168,6 +168,7 @@ a { color: var(--accent); }
 .head-sub .room-time:not(:empty)::before { content: "·"; margin: 0 6px; }
 .chan:hover .chan-del, .chan-del:focus-visible { visibility: visible; }
 .mod-mark { color: var(--live); }   /* muted or deafened by an admin */
+.pm-item.pm-on::after { content: "✓"; float: right; color: var(--accent); }   /* the chosen one in a menu */
 /* an invite link's card under a message, as in Discord */
 .invite-card { width: min(432px, 100%); margin-top: 6px; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--raised); }
 .invite-card-banner { height: 64px; overflow: hidden; }
