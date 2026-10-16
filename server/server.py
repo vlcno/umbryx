@@ -59,6 +59,8 @@ DEFAULTS = {
     # New accounts start in direct messages, like guests with a password, until they have an invite code: one typed
     # when making the account, or later. Admins make the codes (Server settings). False: accounts join straight away.
     "inviteOnly": True,
+    # A line in the first text channel when someone joins the server ("X joined the party."), as in Discord.
+    "joinMessages": True,
     # Accounts (usernames or ids) that may delete anyone's account, Staff's included, and whose own accounts nobody
     # else may delete. Umbryx Staff may delete other people's accounts, but not Staff's.
     "canDeleteStaff": [],
@@ -104,6 +106,7 @@ MAX_EMOJIS = 300
 MAX_FAVORITES = 300
 PBKDF2_ROUNDS = 240_000
 RING_SECONDS = 40
+JOIN_KINDS = 12      # how many join greetings the apps know (the page's JOIN_TEXTS); the server picks one
 # The desktop app's updates. A version is only accepted, and the app only installs it, when its description is
 # signed with the publisher's private key; this is the public half, which can check a signature but not make one.
 UPDATE_KEY = base64.b64decode("hOjCJhEHyp0qFTcFaDyoitsgiT/fAMSnUJp3em6YgRA=")
@@ -1455,6 +1458,8 @@ class Hub:
             self.users[rec["id"]] = rec
             self.names[name.casefold()] = rec
             log("%s created an account%s" % (name, " with an invite" if invite else " (in direct messages until invited)" if rec.get("guest") else ""))
+            if invite:
+                self._announce_join(rec)
         elif mode == "passkey":
             rec = self._passkey_sign_in(c, m)
         elif mode == "guest":
@@ -1524,12 +1529,26 @@ class Hub:
             self._send_bans()
         self._let_in(rec, "let in by %s" % c.name)
 
+    def _announce_join(self, rec):
+        """Someone joined the server: a line in the first text channel, as in Discord ("X joined the party."). The
+        server picks which of the apps' greetings (join: 0 to JOIN_KINDS - 1); they write it with the person's name."""
+        channel = next((x for x in self.channels if x["type"] == "text"), None)
+        if not channel or not self.cfg.get("joinMessages", True):
+            return
+        self.seq += 1
+        msg = {"id": self.seq, "channel": channel["id"], "uid": rec["id"], "name": rec["name"], "ts": int(time.time() * 1000),
+               "text": "", "join": secrets.randbelow(JOIN_KINDS)}
+        self.messages[channel["id"]].append(msg)
+        self._append_line(MESSAGES / (channel["id"] + ".jsonl"), msg)
+        self.broadcast({"type": "chat", "message": msg})
+
     def _let_in(self, rec, how):
         """A guest becomes a member (see on_admit): everyone sees them, and their devices come back with the server."""
         rec.pop("guest", None)
         self._save_users()
         log("%s joined the server, %s" % (rec["name"], how))
         self.broadcast({"type": "user-update", "user": self.public(rec)})   # now every member sees them
+        self._announce_join(rec)
         for x in list(self.conns(rec["id"])):
             x.send({"type": "admitted"})
             x.writer.close()

@@ -352,6 +352,14 @@ a { color: var(--accent); }
 .msg:hover { background: rgba(255, 255, 255, .035); }
 .msg > .avatar { cursor: pointer; }
 .msg-main, .msg-body { min-width: 0; flex: 1; }
+/* someone joined the server: a green arrow where a picture would be, then the greeting */
+.join-msg { align-items: center; flex-wrap: nowrap; }
+.join-arrow { display: grid; place-items: center; flex: none; width: 36px; color: var(--ok); }
+.join-arrow .icon svg { width: 22px; height: 22px; }
+.join-text { min-width: 0; color: var(--dim); }
+.join-name { padding: 0; border: 0; background: none; color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
+.join-name:hover { text-decoration: underline; }
+.join-text time { margin-left: 8px; color: var(--stamp); font-size: 11.5px; }
 .msg-meta { display: flex; align-items: baseline; gap: 8px; }
 .msg-author { padding: 0; border: 0; background: none; font-weight: 700; }
 .msg-author:hover { text-decoration: underline; }

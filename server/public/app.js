@@ -176,6 +176,7 @@ const ICONS = {
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/>',
   headphones: '<path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4.5" height="6.5" rx="1.5"/><rect x="16.5" y="14" width="4.5" height="6.5" rx="1.5"/>',
   screen: '<rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16.5V20"/>',
+  arrowRight: '<path d="M4 12h15M13 6l6 6-6 6"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="M10.9 12.1 20 3M16.5 6.5l3 3M14 9l2.5 2.5"/>',
   globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.4 3.5 5.2 3.5 8.5s-1.1 6.1-3.5 8.5c-2.4-2.4-3.5-5.2-3.5-8.5s1.1-6.1 3.5-8.5z"/>',
   mobile: '<rect x="7" y="3" width="10" height="18" rx="2.2"/><path d="M11 17.5h2"/>',
@@ -827,7 +828,7 @@ function notify(note) {
 }
 
 function notifyMessage(msg, where) {
-  if (!state.me || msg.uid === state.me.id) return;
+  if (!state.me || msg.uid === state.me.id || typeof msg.join === 'number') return;   // join lines don't notify
   const mention = where.kind === 'text' && mentionsMe(msg.text);
   // A channel's own choice (right-click it): all, mentions, none; else the device's setting ("direct messages" still
   // hears mentions).
@@ -3025,11 +3026,29 @@ function focusEditor() {
 /* one message */
 
 // `bare` draws just the message, without hover buttons or grouping (used in the pinned list).
+// Someone joined the server (the server's join line, see its _announce_join): a green arrow and one of these, picked by
+// the server (m.join), with their name as it is now. The iPhone app has the same list, in the same order.
+const JOIN_TEXTS = [
+  '{name} joined the party.', '{name} just showed up!', 'Welcome, {name}. Say hi!', '{name} hopped into the server.',
+  'Everyone welcome {name}!', '{name} just landed.', "Glad you're here, {name}.", '{name} is here. Make some noise!',
+  'A wild {name} appeared.', '{name} slid into the server.', 'Good to see you, {name}.', '{name} brought snacks, hopefully.',
+];
+function joinEl(m) {
+  const who = authorOf(m);
+  const [before, after] = (JOIN_TEXTS[m.join] || JOIN_TEXTS[0]).split('{name}');
+  const name = h('button', { class: 'join-name', type: 'button', text: nick(who), dataset: who.id ? { person: who.id } : {},
+    onclick: () => openCard(who, name) });
+  return h('div', { class: 'msg join-msg', dataset: { id: m.id } },
+    h('span', { class: 'join-arrow' }, icon('arrowRight')),
+    h('div', { class: 'join-text' }, before, name, after, h('time', { text: stamp(m.ts) })));
+}
+
 function messageEl(m, prev, bare) {
+  if (typeof m.join === 'number') return joinEl(m);
   const who = authorOf(m);
   const mine = m.uid === state.me.id;
   const editing = !bare && mine && !!state.editing && state.editing.id === m.id && state.editing.key === convKey();
-  const sameAuthor = prev && (m.uid ? prev.uid === m.uid : !prev.uid && prev.name === m.name);
+  const sameAuthor = prev && typeof prev.join !== 'number' && (m.uid ? prev.uid === m.uid : !prev.uid && prev.name === m.name);
   const compact = !bare && !m.reply && sameAuthor && m.ts - prev.ts < 5 * 60000 && dayKey(prev.ts) === dayKey(m.ts);
   const body = h('div', { class: 'msg-body' });
   if (m.pinned && !bare) body.append(h('div', { class: 'pin-flag' }, icon('pin'), 'Pinned'));

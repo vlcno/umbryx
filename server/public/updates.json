@@ -26,7 +26,8 @@
         "Passkeys: sign in with your face, fingerprint or PIN. Add one in Settings, under Profile.",
         "Skip for now is gone: everyone makes an account. An invite code is still optional.",
         "Calls are for friends only, and calling a friend who's offline rings anyway: on their phone, and when they open Umbryx. A call they missed is waiting for them.",
-        "Right-click a text channel to choose its notifications: All messages, Only @mentions or Nothing. It follows you to every device and your phone."
+        "Right-click a text channel to choose its notifications: All messages, Only @mentions or Nothing. It follows you to every device and your phone.",
+        "When someone joins the server, a welcome line shows in the first channel, like \"Nite_Quest joined the party.\""
       ],
       "fixed": [
         "Chats stay at the newest message instead of drifting up.",
