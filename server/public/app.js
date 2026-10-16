@@ -502,7 +502,9 @@ const DEVICE_LOOK = { desktop: ['screen', 'On the desktop app'], web: ['globe', 
 function devicesEl(user) {
   const on = user && user.online && Array.isArray(user.devices) ? user.devices.filter((d) => DEVICE_LOOK[d]) : [];
   if (!on.length) return null;
-  return h('span', { class: 'devices', 'aria-label': on.map((d) => DEVICE_LOOK[d][1]).join(', ') }, on.map((d) => {
+  // Coloured like their status dot: green online, yellow idle, red do not disturb.
+  const status = isDnd(user) ? 'dnd' : isIdle(user) ? 'idle' : 'online';
+  return h('span', { class: 'devices ' + status, 'aria-label': on.map((d) => DEVICE_LOOK[d][1]).join(', ') }, on.map((d) => {
     const mark = icon(DEVICE_LOOK[d][0]);
     mark.dataset.tip = DEVICE_LOOK[d][1];
     return mark;

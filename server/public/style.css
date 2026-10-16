@@ -966,8 +966,11 @@ input.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2
 .member-line .member-name { flex: 0 1 auto; }
 /* what someone is on, after their name: desktop app, website, phone app */
 .devices { display: inline-flex; flex: none; gap: 3px; color: var(--faint); }
+.devices.online { color: var(--ok); }   /* the colour of their status dot (see .pres) */
+.devices.idle { color: #f0b232; }
+.devices.dnd { color: var(--live); }
 .devices .icon svg { width: 14px; height: 14px; stroke-width: 2; }
-.devices .icon:hover { color: var(--dim); }
+.devices .icon:hover { filter: brightness(1.25); }
 .dm-text .member-line .chan-name { flex: 0 1 auto; min-width: 0; }
 .person-row .who .member-line b { min-width: 0; }
 /* badges, as in Discord: on a profile card a row of emblems in a small box at the top right, under the banner

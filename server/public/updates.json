@@ -13,7 +13,8 @@
         "A Search friends box on the Friends page."
       ],
       "fixed": [
-        "Your phone gets notifications once nobody has used your computer for 3 minutes, instead of 20, even with Umbryx left open on it."
+        "Your phone gets notifications once nobody has used your computer for 3 minutes, instead of 20, even with Umbryx left open on it.",
+        "The phone, computer and website icons after names are coloured like the person's status (green, yellow or red), so they're easy to see."
       ]
     },
     {
