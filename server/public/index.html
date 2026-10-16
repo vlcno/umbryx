@@ -274,15 +274,16 @@
             <div class="plate-picks" id="platePicks"></div>
             <p class="hint">Shows behind your name in direct messages, the member list and voice channels. Your own can be a picture, GIF or WebP, or a short MP4 or WebM video, up to 15 MB: best about 6 to 1 (for example 1320 × 230), with the interesting part on the right, since the left fades out behind your name.</p>
           </div>
-          <div class="field set-passkeys" id="setPasskeys" hidden><span>Passkeys</span>
-            <div class="invite-list" id="passkeyList"></div>
-            <button type="button" class="btn slim" id="passkeyAdd">Add a passkey</button>
-            <p class="hint">Sign in with your face, fingerprint or device PIN instead of your password. A passkey works on the website, the apps and your phone.</p>
-          </div>
           <div class="set-danger">
             <button type="button" class="btn slim danger" id="setDelete">Delete account…</button>
           </div>
         </div>
+      </section>
+      <section class="set-card set-passkeys" id="setPasskeys" hidden>
+        <h4 class="set-title"><span class="set-icon" data-icon="key"></span>Passkeys</h4>
+        <p class="hint">Sign in with your face, fingerprint or device PIN instead of your password. A passkey works on the website, the apps and your phone.</p>
+        <div class="invite-list" id="passkeyList"></div>
+        <button type="button" class="btn slim" id="passkeyAdd">Add a passkey</button>
       </section>
       <section class="set-card" id="setCardLook">
         <h4 class="set-title"><span class="set-icon" data-icon="image"></span>Appearance</h4>

@@ -194,6 +194,8 @@ a { color: var(--accent); }
 .passkey-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
 .set-passkeys #passkeyAdd { justify-self: start; }
 .passkey-row .icon svg { width: 18px; height: 18px; color: var(--dim); }
+.passkey-text { display: grid; flex: 1; min-width: 0; gap: 2px; }   /* the name, and when it was added and used under it */
+.passkey-text .invite-meta { white-space: normal; overflow: visible; }
 .chan-members { display: grid; gap: 2px; padding: 2px 0 6px 30px; }
 .vm { display: flex; align-items: center; gap: 8px; height: 28px; padding-right: 6px; border: 0; background: none; color: var(--dim); font-size: 13px; text-align: left; }
 .vm-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

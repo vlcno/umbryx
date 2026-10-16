@@ -1560,8 +1560,9 @@ function renderPasskeys() {
   const day = (ms) => (ms ? new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : 'never');
   const list = state.passkeys || [];
   $('#passkeyList').replaceChildren(...(list.length ? list.map((p) => h('div', { class: 'invite-row passkey-row' },
-    icon('key'), h('b', { class: 'ban-name', text: p.name }),
-    h('span', { class: 'invite-meta', text: `added ${day(p.created)} · last used ${day(p.used)}` }),
+    icon('key'),
+    h('span', { class: 'passkey-text' }, h('b', { class: 'ban-name', text: p.name }),
+      h('span', { class: 'invite-meta', text: `Added ${day(p.created)} · last used ${day(p.used)}` })),
     h('button', { class: 'ctl sm', type: 'button', title: 'Remove this passkey', onclick: () => {
       if (confirm(`Remove the passkey "${p.name}"? It won't sign you in any more. Remove it from the device's passwords too.`)) send({ type: 'passkey-remove', id: p.id });
     } }, icon('x'))))
@@ -5931,9 +5932,9 @@ $('#settingsForm').addEventListener('submit', (event) => {
 // above it (a grid's rows left gaps): three columns in a wide window, two in a narrower one, one on a phone (the
 // widths match style.css's).
 const SETTINGS_COLUMNS = {
-  3: [['setCardProfile'], ['setCardLook', 'setCardApp'], ['setCardVoice', 'setActivityField']],
-  2: [['setCardProfile', 'setCardApp'], ['setCardLook', 'setCardVoice', 'setActivityField']],
-  1: [['setCardProfile', 'setCardLook', 'setCardVoice', 'setActivityField', 'setCardApp']],
+  3: [['setCardProfile'], ['setPasskeys', 'setCardLook', 'setCardApp'], ['setCardVoice', 'setActivityField']],
+  2: [['setCardProfile', 'setCardApp'], ['setPasskeys', 'setCardLook', 'setCardVoice', 'setActivityField']],
+  1: [['setCardProfile', 'setPasskeys', 'setCardLook', 'setCardVoice', 'setActivityField', 'setCardApp']],
 };
 const settingsWide = [matchMedia('(min-width: 1101px)'), matchMedia('(min-width: 761px)')];
 function layoutSettingsColumns() {
