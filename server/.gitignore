@@ -1,0 +1,7 @@
+# Never in a repository: accounts, messages, uploads, this server's settings and keys
+data/
+config.json
+*.pem
+*.key
+__pycache__/
+*.pyc

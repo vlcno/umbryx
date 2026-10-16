@@ -257,7 +257,7 @@ const session = {
   clear() { store.set('session', ''); tabToken.set(''); },
 };
 
-// The desktop app reaches this server at its own address (welcome.appAddress, e.g. https://us.vlcno.xyz) when it
+// The desktop app reaches this server at its own address (welcome.appAddress, e.g. https://app.example.com) when it
 // came in some other way, such as the home IP: the page asks it to move there, handing over this device's sign-in
 // and settings (what this page keeps under "umbryx."), so nobody has to sign in again. The app (1.4.21 on) moves
 // only once that address answers with a trusted certificate and is this same server; until then nothing changes.
@@ -1399,10 +1399,10 @@ function markDmRead(peer) {
 let authMode = 'login';
 
 // Invite codes: what someone typed or pasted, as the bare code, whether the code itself or a link ending in it
-// (us.vlcno.xyz/K7QM2XPA).
+// (app.example.com/K7QM2XPA).
 const inviteCodeOf = (text) => String(text || '').trim().replace(/[?#].*$/, '').replace(/\/+$/, '').split('/').pop()
   .toUpperCase().replace(/[^A-Z0-9]/g, '');
-// An invite link (https://us.vlcno.xyz/K7QM2XPA) opened this page: its code, until it is used. The address bar goes
+// An invite link (https://app.example.com/K7QM2XPA) opened this page: its code, until it is used. The address bar goes
 // back to the plain address, so a reload does not offer it again.
 let linkInvite = (() => {
   const hit = location.pathname.match(/^\/([A-Za-z0-9]{8})\/?$/);

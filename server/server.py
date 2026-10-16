@@ -73,7 +73,7 @@ DEFAULTS = {
     # The Client ID of a Spotify developer app, for "Listening to Spotify" (set in Server settings; see README).
     "spotifyClientId": "",
     # The address the desktop app should use for this server, when that is not the one people type for the website:
-    # "https://us.vlcno.xyz". Apps that came in another way (an IP address) move to it by themselves, keeping their
+    # "https://app.example.com". Apps that came in another way (an IP address) move to it by themselves, keeping their
     # sign-ins, once it answers with a trusted certificate. Empty: apps stay where they are.
     "appAddress": "",
     "iceServers": [
