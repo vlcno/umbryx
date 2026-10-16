@@ -113,6 +113,8 @@ REPORT_REASONS = {"spam": "Spam", "harassment": "Harassment or bullying", "hate"
                   "sexual": "Sexual content", "violence": "Violence or threats", "self-harm": "Self-harm",
                   "other": "Something else"}
 REPORTS_PER_HOUR = 10   # per account
+# Pushes from a person: they carry who it's from (name and picture), so the iPhone app can show their picture.
+PERSON_PUSHES = ("dm", "ping", "mention", "message", "call", "missed-call", "friend")
 REPORT_KEEP_DAYS = 90   # closed reports are kept this long, then go
 # The desktop app's updates. A version is only accepted, and the app only installs it, when its description is
 # signed with the publisher's private key; this is the public half, which can check a signature but not make one.
@@ -1858,8 +1860,17 @@ class Hub:
             aps["thread-id"] = thread
         if call or ping:
             aps["interruption-level"] = "time-sensitive"
+        # From a person: their username and picture (a path like /uploads/x.jpg, and how it sits), and mutable-content
+        # so the iPhone app's notification extension can put the picture on it.
+        sender = self.users.get(data.get("from")) if data.get("kind") in PERSON_PUSHES else None
+        about = {}
+        if sender:
+            aps["mutable-content"] = 1
+            about = {"name": sender["name"], "avatar": sender.get("avatar") or ""}
+            if about["avatar"] and sender.get("avatarFit"):
+                about["avatarFit"] = sender["avatarFit"]
         # Which server it came from, so a phone with several opens the right one.
-        payload = {"aps": aps, "umbryx": {**data, "server": app_address(self.cfg)}}
+        payload = {"aps": aps, "umbryx": {**data, **about, "server": app_address(self.cfg)}}
         loop = asyncio.get_running_loop()
         for entry in list(tokens):
             if entry.get("session") and entry["session"] not in self.sessions:
@@ -2798,13 +2809,13 @@ class Hub:
                 continue
             if rec["id"] == replied:
                 self.notify(rec, "%s replied" % self._shown_name(rec, c.user), self._push_text(msg) if text else "[attachment]",
-                            {"kind": "mention", "channel": ch["id"], "id": msg["id"], "reply": True}, thread="ch-" + ch["id"])
+                            {"kind": "mention", "from": c.id, "channel": ch["id"], "id": msg["id"], "reply": True}, thread="ch-" + ch["id"])
             elif text and re.search(r"(?<![\w@])@" + re.escape(rec["name"]) + r"(?![\w])", text, re.I):
                 self.notify(rec, "%s in #%s" % (self._shown_name(rec, c.user), ch["name"]), self._push_text(msg),
-                            {"kind": "mention", "channel": ch["id"], "id": msg["id"]}, thread="ch-" + ch["id"])
+                            {"kind": "mention", "from": c.id, "channel": ch["id"], "id": msg["id"]}, thread="ch-" + ch["id"])
             elif level == "all":
                 self.notify(rec, "%s in #%s" % (self._shown_name(rec, c.user), ch["name"]), self._push_text(msg),
-                            {"kind": "message", "channel": ch["id"], "id": msg["id"]}, thread="ch-" + ch["id"])
+                            {"kind": "message", "from": c.id, "channel": ch["id"], "id": msg["id"]}, thread="ch-" + ch["id"])
 
     def on_history(self, c, m):
         ch = self.channel(m.get("channel"), "text")
