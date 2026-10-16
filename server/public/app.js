@@ -3643,7 +3643,11 @@ function suggestMentions() {
   const hit = input.selectionStart === input.selectionEnd && before.match(/(^|\s)@([^@\n]{0,24})$/);
   if (!hit || !state.me) { closeMentions(); return; }
   const query = hit[2].toLowerCase();
-  const people = [...state.users.values()].filter((u) => u.id !== state.me.id && !u.deleted);
+  // In a direct message only its two people can be mentioned (you and them); in a channel, the server's members
+  // (not people outside it, who can't see channels).
+  const people = state.view.type === 'dm'
+    ? [self(), state.users.get(state.view.id)].filter((u) => u && !u.deleted)
+    : [...state.users.values()].filter((u) => u.id !== state.me.id && !u.deleted && !u.guest);
   const names = (u) => [u.name, u.display || ''].map((n) => n.toLowerCase());
   const starts = people.filter((u) => names(u).some((n) => n && n.startsWith(query)));
   const contains = query ? people.filter((u) => !starts.includes(u) && names(u).some((n) => n && n.includes(query))) : [];

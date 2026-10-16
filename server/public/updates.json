@@ -37,7 +37,8 @@
         "Right-clicking anyone, anywhere they show, opens their menu; the browser's own menu no longer pops up.",
         "Pressing Enter in a box in Settings, or any other window, saves it instead of doing nothing.",
         "Friends rows are tidier: nickname and remove friend live in the right-click menu.",
-        "Settings no longer leaves a big gap above the App card: each column stacks its cards."
+        "Settings no longer leaves a big gap above the App card: each column stacks its cards.",
+        "In a direct message, @ only suggests the two of you."
       ]
     },
     {
