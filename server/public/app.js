@@ -4752,6 +4752,7 @@ async function toggleMic() {
   if (!rtc.muted && rtc.deafened) { rtc.deafened = false; applyDeafen(); }
   applyMic();
   sendFlags(); updateControls();
+  switchSound(rtc.muted ? 'mute' : 'unmute');
 }
 
 function toggleDeafen() {
@@ -4762,6 +4763,25 @@ function toggleDeafen() {
   applyMic();
   applyDeafen();
   sendFlags(); updateControls();
+  switchSound(rtc.deafened ? 'deafen' : 'undeafen');
+}
+
+// Muting, unmuting, deafening and undeafening yourself each have a sound (files in public/sounds), on the chosen
+// speakers. Deafening still plays its own: it is you who pressed it. Off with the other sounds in Settings.
+const SWITCH_SOUNDS = { mute: '/sounds/mute.mp3', unmute: '/sounds/unmute.mp3', deafen: '/sounds/deafen.mp3', undeafen: '/sounds/undeafen.mp3' };
+const switchPlayers = {};
+function switchSound(kind) {
+  if (!settings.sounds || !SWITCH_SOUNDS[kind]) return;
+  for (const other of Object.values(switchPlayers)) other.pause();   // quick presses: only the latest plays
+  let player = switchPlayers[kind];
+  if (!player) {
+    player = switchPlayers[kind] = new Audio(SWITCH_SOUNDS[kind]);
+    player.preload = 'auto';
+    player.volume = 0.6;
+  }
+  applyOutput(player);
+  player.currentTime = 0;
+  player.play().catch(() => {});
 }
 
 function applyDeafen() {

@@ -7,7 +7,8 @@
       "added": [
         "Voice channels look like the iPhone app: everyone as a card in a grid, a green ring around whoever is talking, LIVE on whoever is sharing.",
         "A camera or a screen share takes the stage in its own shape, with everyone else beside it. Double-click one to fill the window; Esc goes back.",
-        "New controls at the bottom: mute and deafen, camera and share, and a red hang-up button."
+        "New controls at the bottom: mute and deafen, camera and share, and a red hang-up button.",
+        "Muting, unmuting, deafening and undeafening yourself each play a short sound (off with the other sounds in Settings)."
       ],
       "fixed": [
         "Cameras are never cut off any more: a phone held upright shows tall, a webcam wide, in the voice window, the floating preview and the strip under a shared screen."
