@@ -215,6 +215,7 @@ const ICONS = {
   clip: '<path d="M20 11.5l-7.8 7.8a5 5 0 0 1-7-7l8.2-8.2a3.3 3.3 0 0 1 4.7 4.7l-8.2 8.1a1.7 1.7 0 0 1-2.4-2.4l7.5-7.4"/>',
   send: '<path d="M4 12 20 4l-5 16-3.5-6.5z"/><path d="M11.5 13.5 20 4"/>',
   expand: '<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>',
+  shrink: '<path d="M4 14h6v6M20 10h-6V4M10 14l-6 6M14 10l6-6"/>',
   eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/>',
   menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
   slash: '<path d="M4 4l16 16"/>',
@@ -2183,6 +2184,8 @@ function setView(view) {
 
 function renderHead() {
   const v = state.view;
+  // A voice channel or call: its name centred, with how many are in and for how long under it (see syncStage).
+  $('.main-head').classList.toggle('voice-head', v.type === 'voice');
   delete $('#headIcon').dataset.person;
   delete $('#headTitle').dataset.person;
   const actions = $('#headActions');
@@ -4781,7 +4784,7 @@ function renderPing() {
   $('#vpPing').textContent = pingMs == null ? '' : `${pingMs} ms`;
   $('#vpPing').className = 'ping' + quality;
   $('#vpPing').title = 'Ping to the server';
-  $('#headPing').textContent = pingMs == null || state.view.type !== 'voice' ? '' : `Ping ${pingMs} ms`;
+  $('#headPing').textContent = pingMs == null || state.view.type !== 'voice' ? '' : `${pingMs} ms`;
   $('#headPing').className = 'ping' + quality;
 }
 
@@ -5374,6 +5377,7 @@ $('#shareForm').addEventListener('submit', (event) => {
 /* ---------- voice: stage ---------- */
 
 const tiles = new Map();   // "user:<id>" and "screen:<id>" -> element
+let expanded = null;       // the tile filling the window, if one is (see toggleExpand)
 
 function toggleFullscreen(el) {
   if (document.fullscreenElement) document.exitFullscreen();
@@ -5401,8 +5405,11 @@ function personTile(u) {
   const el = h('div', { class: 'tile person' + (mine ? ' mine' : ''), title: nick(u), dataset: { speak: u.id } },
     pic,
     cam,
-    h('div', { class: 'person-name' }, h('span', { text: mine ? `${nick(u)} (you)` : nick(u) }), marks),
+    h('div', { class: 'person-name' }, h('span', { text: mine ? 'You' : nick(u) }), marks),
     status,
+    h('span', { class: 'live-badge person-live', text: 'LIVE', title: mine ? 'You are sharing your screen' : 'Sharing their screen' }),
+    h('span', { class: 'person-spin', title: 'Connecting…', 'aria-label': 'Connecting' }),
+    h('button', { class: 'ctl tile-back', type: 'button', title: 'Back (Esc)', onclick: () => toggleExpand(el) }, icon('shrink')),
     h('button', { class: 'ctl person-full', type: 'button', title: 'Full screen', onclick: () => toggleFullscreen(el) }, icon('expand')),
     mine ? null : h('div', { class: 'person-vol' }, icon('speaker'), slider));
   // The tile takes the camera's shape once its size is known, and again if the sender turns their phone.
@@ -5410,7 +5417,9 @@ function personTile(u) {
   // One click focuses the camera, two go full screen: the first waits a moment to see whether a second follows.
   let clickWait = 0;
   cam.addEventListener('click', () => { clearTimeout(clickWait); clickWait = setTimeout(() => toggleCamFocus(u.id), 220); });
-  cam.addEventListener('dblclick', () => { clearTimeout(clickWait); toggleFullscreen(el); });
+  // In a voice channel a double-click fills the window with it (Esc, or the button top-left, goes back); in a call,
+  // full screen as before.
+  cam.addEventListener('dblclick', () => { clearTimeout(clickWait); if (channelById(rtc.channel)) toggleExpand(el); else toggleFullscreen(el); });
   el.parts = { marks, status, cam };
   return el;
 }
@@ -5436,19 +5445,23 @@ function screenTile(u) {
     volumes['screen:' + u.id] = +slider.value;
     store.set('volumes', volumes);
   });
-  const el = h('div', { class: 'tile screen' },
+  const el = h('div', { class: 'tile screen' + (mine ? ' mine' : '') },
     video,
     h('div', { class: 'tile-tag' }, h('span', { class: 'live-badge', text: 'LIVE' }), who, stat),
-    h('div', { class: 'tile-cta' }, avatar(u, 'lg'), note,
-      mine ? show : h('button', { class: 'btn primary', type: 'button', onclick: () => watch(u.id, true) }, icon('eye'), 'Watch stream')),
+    h('div', { class: 'tile-cta' }, note,
+      mine ? show : h('button', { class: 'btn primary', type: 'button', onclick: () => watch(u.id, true) }, 'Watch stream')),
+    mine ? null : h('button', { class: 'ctl tile-close', type: 'button', title: 'Stop watching', onclick: () => { if (expanded === el) toggleExpand(el); watch(u.id, false); } }, icon('x')),
+    h('button', { class: 'ctl tile-back', type: 'button', title: 'Back (Esc)', onclick: () => toggleExpand(el) }, icon('shrink')),
     h('div', { class: 'tile-bar' },
       mine ? null : icon('speaker'), mine ? null : slider,
       h('span', { class: 'spacer' }),
-      mine ? h('button', { class: 'ctl', type: 'button', title: 'Stream settings', onclick: openShareDialog }, icon('sliders'))
-           : h('button', { class: 'ctl', type: 'button', title: 'Stop watching', onclick: () => watch(u.id, false) }, icon('x')),
+      mine ? h('button', { class: 'ctl', type: 'button', title: 'Stream settings', onclick: openShareDialog }, icon('sliders')) : null,
       // No full screen for your own share: showing your own screen full size makes it film itself.
       mine ? null : h('button', { class: 'ctl', type: 'button', title: 'Full screen', onclick: () => toggleFullscreen(el) }, icon('expand'))));
-  if (!mine) video.addEventListener('dblclick', () => toggleFullscreen(el));
+  // Double-click: in a voice channel it fills the window (Esc, or the button top-left, goes back); in a call, full
+  // screen as before.
+  if (!mine) video.addEventListener('dblclick', () => { if (channelById(rtc.channel)) toggleExpand(el); else toggleFullscreen(el); });
+  for (const name of ['loadedmetadata', 'resize']) video.addEventListener(name, () => queueStageLayout());
   // The pointer resting on the share for a moment hides its labels and controls (and itself), as when watching a
   // video; moving it brings them back. Not while it rests on the labels or controls themselves.
   let resting = 0;
@@ -5484,6 +5497,9 @@ function rebuildStage() {
 
 function syncStage() {
   const people = rtc.channel ? usersIn(rtc.channel) : [];
+  // In a voice channel, a camera goes on the stage with the screen shares; everyone else gets a card. A one-on-one
+  // call keeps everyone together in its own layout.
+  const onStage = !!rtc.channel && !!channelById(rtc.channel);
   const wanted = new Set();
   for (const u of people) {
     wanted.add('user:' + u.id);
@@ -5503,6 +5519,8 @@ function syncStage() {
     el.parts.marks.replaceChildren(...[voiceMarks(u)].filter(Boolean));
     const linking = !mine && (!peer || peer.pc.connectionState !== 'connected');
     el.parts.status.textContent = linking ? 'Connecting…' : u.sharing ? (mine ? 'Sharing your screen' : 'Sharing their screen') : '';
+    el.classList.toggle('linking', linking);
+    el.classList.toggle('sharing', !!u.sharing);
     const camera = !u.camera ? null : mine ? (rtc.camera ? rtc.camera.stream : null) : (peer ? peer.cameraStream : null);
     if (el.parts.cam.srcObject !== (camera || null)) {
       el.parts.cam.srcObject = camera || null;
@@ -5511,6 +5529,13 @@ function syncStage() {
     }
     el.classList.toggle('has-cam', !!camera);
     if (camera) cameras++;
+    const home = onStage && camera ? $('#streams') : $('#people');
+    if (el.parentElement !== home) {
+      if (!camera && expanded === el) toggleExpand(el);
+      el.style.removeProperty('width');    // a card again: its size from the cards' layout, not the stage's
+      el.style.removeProperty('height');
+      home.append(el);
+    }
 
     if (!u.sharing) continue;
     streams++;
@@ -5537,20 +5562,98 @@ function syncStage() {
     if (tile.parts.show) tile.parts.show.hidden = !ownHidden;
   }
 
+  // The cards in a steady order, as on the iPhone: your own first, then everyone by name.
+  const cards = $('#people');
+  const order = people.filter((u) => u.id === state.me.id).concat(people.filter((u) => u.id !== state.me.id))
+    .map((u) => tiles.get('user:' + u.id)).filter((el) => el && el.parentElement === cards);
+  if (order.some((el, i) => cards.children[i] !== el)) for (const el of order) cards.append(el);
   $('#stage').classList.toggle('has-streams', streams > 0);
   $('#stage').classList.toggle('has-cams', cameras > 0);
+  $('#stage').classList.toggle('has-video', onStage && streams + cameras > 0);
+  if (expanded && (!expanded.isConnected || $('#voiceView').hidden)) toggleExpand(expanded);
   // A one-on-one call gets the compact look: round pictures in a row and a small control bar.
   $('#voiceView').classList.toggle('call', !!rtc.channel && !channelById(rtc.channel));
   $('#streams').style.setProperty('--cols', streams <= 1 ? 1 : streams <= 4 ? 2 : 3);
   if (state.view.type === 'voice') {
-    $('#headSub').replaceChildren(people.length <= 1 ? 'Waiting for others' : `${people.length} people here`,
+    $('#headSub').replaceChildren(people.length === 1 ? '1 person' : `${people.length} people`,
       h('span', { class: 'room-time', dataset: { room: rtc.channel || '' } }));
     paintVoiceClocks();
   }
   placeCallPanel();
   syncPip();
   layoutCams();
+  layoutStage();
 }
+
+/* ---------- voice channel: cards, and the stage ---------- */
+
+// Nobody has video: a grid of cards, 1 column for one person, 2 up to four, 3 up to nine, else 4; 16:10, at most
+// 460px wide, as big as the space allows. Video: every camera and screen share on the stage in its own shape, the
+// column count that shows them biggest; the cards go in a column beside it (a row under it when the window is narrow).
+function stageRatio(el) {
+  const video = el.classList.contains('screen') ? el.parts.video : el.parts.cam;
+  if (el.classList.contains('screen') && !el.classList.contains('playing')) return 0;   // the offer fills its space
+  return video && video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 16 / 9;
+}
+
+function layoutStage() {
+  const stage = $('#stage');
+  const people = $('#people');
+  const area = $('#streams');
+  const channel = !!rtc.channel && !!channelById(rtc.channel);
+  if (!channel || $('#voiceView').hidden) return;
+  stage.classList.toggle('narrow', stage.clientWidth < 720);
+  if (!stage.classList.contains('has-video')) {
+    const n = people.children.length;
+    const cols = n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4;
+    const rows = Math.ceil(n / cols) || 1;
+    const gap = 10;
+    const w = Math.min(460, (people.clientWidth - gap * (cols - 1)) / cols, (people.clientHeight - gap * (rows - 1)) / rows * 1.6);
+    people.style.setProperty('--card-w', Math.floor(Math.max(120, w)) + 'px');
+    return;
+  }
+  const items = [...area.children].filter((el) => el !== expanded);
+  const gap = 12;
+  const width = area.clientWidth;
+  const height = area.clientHeight;
+  if (!items.length || !width || !height) return;
+  const ratios = items.map(stageRatio);
+  let best = null;
+  for (let cols = 1; cols <= items.length; cols++) {
+    const rows = Math.ceil(items.length / cols);
+    const bw = (width - gap * (cols - 1)) / cols;
+    const bh = (height - gap * (rows - 1)) / rows;
+    if (bw <= 0 || bh <= 0) continue;
+    const sizes = ratios.map((r) => (!r ? [bw, bh] : r > bw / bh ? [bw, bw / r] : [bh * r, bh]));
+    const shown = sizes.reduce((sum, [w, h]) => sum + w * h, 0);
+    if (!best || shown > best.shown) best = { shown, sizes };
+  }
+  if (!best) return;
+  items.forEach((el, i) => {
+    el.style.width = Math.floor(best.sizes[i][0]) + 'px';
+    el.style.height = Math.floor(best.sizes[i][1]) + 'px';
+  });
+}
+let stageQueued = false;
+function queueStageLayout() {
+  if (stageQueued) return;
+  stageQueued = true;
+  requestAnimationFrame(() => { stageQueued = false; layoutStage(); });
+}
+new ResizeObserver(() => queueStageLayout()).observe($('#stage'));
+
+// A share or a camera filling the window (a double-click on it); the button top-left, Esc or a second double-click
+// puts it back (expanded: that tile, declared with the other tiles).
+function toggleExpand(el) {
+  if (expanded && expanded !== el) expanded.classList.remove('expanded');
+  expanded = expanded === el ? null : el;
+  el.classList.toggle('expanded', expanded === el);
+  if (expanded) { el.style.removeProperty('width'); el.style.removeProperty('height'); }
+  queueStageLayout();
+}
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && expanded && !document.fullscreenElement && !document.querySelector('dialog[open]')) toggleExpand(expanded);
+});
 
 /* ---------- voice: cameras as big as the space allows ---------- */
 
@@ -5575,12 +5678,14 @@ function camShape(tile, video) {
   tile.style.setProperty('--cam-ratio', `${w} / ${h}`);
   tile.style.setProperty('--cam-r', (w / h).toFixed(4));
   tile.classList.toggle('tall-cam', h > w);
+  queueStageLayout();
 }
 
 function layoutCams() {
   const people = $('#people');
   const stage = $('#stage');
-  const gallery = !$('#voiceView').hidden && stage.classList.contains('has-cams') && !stage.classList.contains('has-streams') && !callAboveShown();
+  const gallery = !$('#voiceView').hidden && $('#voiceView').classList.contains('call') && stage.classList.contains('has-cams')
+    && !stage.classList.contains('has-streams') && !callAboveShown();
   const tiles = [...people.children];
   const focused = gallery && camFocus ? tiles.find((el) => el.dataset.speak === camFocus && el.classList.contains('has-cam')) : null;
   if (!focused) camFocus = null;
@@ -5857,7 +5962,11 @@ setInterval(async () => {
       const tile = tiles.get('screen:' + peer.id);
       const track = peer.watching && peer.screenStream ? peer.screenStream.getVideoTracks()[0] : null;
       const receiver = track && peer.pc.getReceivers().find((r) => r.track === track);
-      if (tile && receiver) tile.parts.stat.textContent = statLine(await videoStats(receiver, peer.inStat, 'inbound'), false);
+      if (tile && receiver) {
+        const stats = await videoStats(receiver, peer.inStat, 'inbound');
+        tile.parts.stat.textContent = stats && stats.width ? `${stats.width}×${stats.height} · ${stats.fps} fps` : 'Starting…';
+        tile.parts.stat.title = statLine(stats, false);
+      }
     }
     const mine = rtc.screen && tiles.get('screen:' + state.me.id);
     if (!mine) return;

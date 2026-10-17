@@ -331,6 +331,18 @@ a { color: var(--accent); }
 .main-head { display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 16px; border-bottom: 1px solid var(--line); flex: none; }
 .main-head h2 { font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .head-icon { color: var(--faint); display: inline-flex; align-items: center; }
+.head-main, .head-titles { display: contents; }
+/* a voice channel or call: its name centred, "3 people · 4:02" under it, the ping as plain text on the right */
+.main-head.voice-head { position: relative; }
+.voice-head .head-main { display: flex; align-items: center; gap: 10px; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: calc(100% - 340px); }
+.voice-head .head-titles { display: grid; min-width: 0; line-height: 1.2; }
+.voice-head .head-icon { color: var(--ok); }
+.voice-head .head-icon .icon svg { width: 22px; height: 22px; }
+.voice-head h2 { font-size: 16px; font-weight: 600; }
+.voice-head .head-sub { font-size: 11.5px; color: var(--dim); }
+.voice-head .menu-btn { order: -2; }
+.voice-head .spacer { order: -1; }
+.voice-head #headPing { font-size: 12px; font-weight: 500; }
 .head-sub { color: var(--faint); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .head-actions { display: flex; gap: 6px; flex: none; }
 .menu-btn { display: none; }
@@ -500,13 +512,19 @@ input[type="range"] { accent-color: var(--accent); min-width: 0; flex: 1; height
 .tile.screen:fullscreen { border: 0; border-radius: 0; }
 
 .mic-note { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px 14px; flex: none; margin: 0 16px; padding: 10px 14px; border: 1px solid rgba(242, 178, 74, .5); border-radius: 12px; color: var(--accent); font-size: 13px; text-align: center; }
-.dock { display: flex; justify-content: center; flex-wrap: wrap; gap: 10px; padding: 12px 16px 18px; flex: none; }
-.dock-btn { display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 18px; border: 1px solid var(--line); border-radius: 22px; background: var(--raised); font-weight: 600; }
-.dock-btn:hover { background: var(--hover); }
-.dock-btn.on { background: rgba(240, 83, 91, .14); border-color: var(--live); color: var(--live); }
-.dock-btn.live { background: rgba(67, 208, 138, .14); border-color: var(--ok); color: var(--ok); }
-.dock-btn.danger { background: var(--live); border-color: var(--live); color: #fff; }
-.dock-btn.danger:hover { filter: brightness(1.08); }
+/* the controls: a pill with mute and deafen, a pill with camera and share, a red hang-up button (icons; the name
+   of each is its tooltip) */
+.dock { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 12px; padding: 10px 16px 18px; flex: none; }
+.dock-group { display: flex; gap: 2px; padding: 5px; border: 1px solid rgba(255, 255, 255, .08); border-radius: 16px; background: rgba(11, 11, 13, .92); }
+.dock-btn { display: inline-grid; place-items: center; width: 52px; height: 44px; padding: 0; border: 0; border-radius: 11px; background: none; color: #fff; }
+.dock-btn:hover { background: rgba(255, 255, 255, .08); }
+.dock-btn span:not(.icon) { display: none; }
+.dock-btn .icon svg { width: 22px; height: 22px; }
+.dock-btn .icon.off { color: inherit; }   /* white unless the button is on: red for mute and deafen, green for camera and share */
+.dock-btn.on { color: var(--live); }
+.dock-btn.live { color: var(--ok); }
+.dock-btn.danger { width: 64px; height: 56px; border-radius: 16px; background: #f0535b; color: #fff; }
+.dock-btn.danger:hover { background: #f36a71; }
 
 /* message hover buttons, replies and pins */
 .msg-actions { position: absolute; top: 0; right: 16px; display: flex; gap: 2px; padding: 2px; visibility: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); }
@@ -906,8 +924,7 @@ input.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2
 .pip-open { position: absolute; top: 6px; right: 6px; opacity: 0; border: 1px solid rgba(255, 255, 255, .14); background: rgba(0, 0, 0, .72); color: #fff; transition: opacity .12s; }
 .pip:hover .pip-open, .pip-open:focus-visible { opacity: 1; }
 
-/* one-on-one calls: round pictures in a row and a compact control bar */
-.dock-group { display: contents; }
+/* one-on-one calls: round pictures in a row */
 .voice-view.call .people { align-items: center; }
 .voice-view.call .tile.person.has-cam { --box: min(44vw, 460px); width: min(var(--box), calc(var(--box) * 9 / 16 * var(--cam-r, 1.7778))); height: calc(var(--box) * 9 / 16);
   aspect-ratio: auto; overflow: hidden; border-radius: 12px; background: #000; }
@@ -928,16 +945,7 @@ input.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2
 .voice-view.call .person-name:has(.person-marks:empty) { display: none; }
 .voice-view.call .person-state { position: absolute; left: 50%; top: calc(100% + 6px); transform: translateX(-50%); white-space: nowrap; min-height: 0; }
 .voice-view.call .stage.has-streams .tile.person > .avatar { width: 44px; height: 44px; font-size: 18px; }
-.voice-view.call .dock { gap: 10px; padding-bottom: 22px; }
-.voice-view.call .dock-group { display: flex; gap: 2px; padding: 5px; border: 1px solid var(--line); border-radius: 12px; background: var(--raised); }
-.voice-view.call .dock-btn { width: 48px; height: 44px; padding: 0; justify-content: center; border: 0; border-radius: 8px; background: none; }
-.voice-view.call .dock-btn:hover { background: var(--hover); }
-.voice-view.call .dock-btn.on { background: none; color: var(--live); }
-.voice-view.call .dock-btn.live { background: none; color: var(--ok); }
-.voice-view.call .dock-btn span:not(.icon) { display: none; }
-.voice-view.call .dock-btn .icon svg { width: 22px; height: 22px; }
-.voice-view.call .dock-btn.danger { width: 66px; height: 54px; border-radius: 12px; background: #d83c3e; color: #fff; }
-.voice-view.call .dock-btn.danger:hover { background: #e54b4d; filter: none; }
+.voice-view.call .dock { padding-bottom: 22px; }
 
 /* desktop app: a call across the top of the conversation with that person (placeCallPanel in app.js) */
 /* as tall as what is in it needs (pictures, cameras, a note about the microphone), at least 270px; a screen
@@ -1295,8 +1303,6 @@ html.light-theme { --partner: #1f2328; --partner-text: #1f2328; --partner-mark: 
   .msg { padding-right: 14px; padding-left: 14px; }
   .msg-actions { right: 8px; }
   .msg.compact { padding-left: 64px; }
-  .dock-btn span:not(.icon) { display: none; }
-  .dock-btn { padding: 0 14px; }
   .friends-view { padding: 14px; }
   .person-row { flex-wrap: wrap; }
 }
@@ -1307,3 +1313,60 @@ html.light-theme { --partner: #1f2328; --partner-text: #1f2328; --partner-mark: 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* ---------- a voice channel (not a one-on-one call): cards, and the stage (addendum 15, as on the iPhone) ---------- */
+.voice-view:not(.call) .stage { flex-direction: row; gap: 14px; }
+.voice-view:not(.call) .stage:not(.has-video) #streams { display: none; }
+.voice-view:not(.call) .stage.has-video #streams { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; justify-content: center; align-content: center; align-items: center; gap: 12px; overflow: hidden; }
+/* nobody has video: the cards fill the space (sizes from layoutStage) */
+.voice-view:not(.call) .stage:not(.has-video) #people { flex: 1; display: flex; flex-wrap: wrap; justify-content: center; align-content: center; align-items: flex-start; gap: 10px; max-height: none; overflow-y: auto; }
+/* a card */
+.voice-view:not(.call) #people > .tile.person { --pic: min(132px, calc(var(--card-w, 300px) * .275)); position: relative; display: block; flex: none; width: var(--card-w, 300px); height: auto; aspect-ratio: 16 / 10; padding: 0; overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .08); border-radius: 18px; background: #16161a; box-shadow: none; transition: border-color .15s, box-shadow .15s; }
+.voice-view:not(.call) #people > .tile.person > .avatar { position: absolute; left: 50%; top: 45%; transform: translate(-50%, -50%); width: var(--pic); height: var(--pic); border: 0; font-size: calc(var(--pic) * .42); opacity: 1; transition: box-shadow .15s; }
+.voice-view:not(.call) #people > .tile.person.speaking { border-color: var(--ok); box-shadow: 0 0 0 1.5px var(--ok); }
+.voice-view:not(.call) #people > .tile.person.speaking > .avatar { box-shadow: 0 0 0 5px #16161a, 0 0 0 8px var(--ok), 0 0 24px 8px rgba(67, 208, 138, .3); }
+.voice-view:not(.call) #people > .tile.person .person-name { position: absolute; left: 10px; bottom: 10px; max-width: calc(100% - 20px); padding: 4px 10px; border-radius: 999px; background: rgba(0, 0, 0, .55); color: #fff; font-size: 14px; font-weight: 600; }
+.voice-view:not(.call) #people > .tile.person :is(.person-state, .person-full, .person-banner) { display: none; }
+.voice-view:not(.call) #people > .tile.person .person-vol { display: flex; position: absolute; top: 10px; right: 10px; width: 132px; padding: 3px 8px; border-radius: 8px; background: rgba(0, 0, 0, .6); color: #fff; }
+.voice-view:not(.call) #people > .tile.person.linking .person-vol { display: none; }
+.person-live, .person-spin, .tile-back, .tile-close { display: none; }
+.voice-view:not(.call) .tile.person.sharing .person-live { display: block; position: absolute; top: 10px; left: 10px; }
+.voice-view:not(.call) .tile.person.linking .person-spin { display: block; position: absolute; top: 12px; right: 12px; width: 16px; height: 16px; border: 2px solid rgba(255, 255, 255, .22); border-top-color: #fff; border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+/* video: the cards in a 210px column beside the stage, 116px tall */
+.voice-view:not(.call) .stage.has-video #people { --card-w: 186px; flex: none; width: 210px; display: flex; flex-direction: column; flex-wrap: nowrap; justify-content: flex-start; align-content: stretch; gap: 10px; max-height: none; overflow-y: auto; }
+.voice-view:not(.call) .stage.has-video #people > .tile.person { --pic: 52px; width: 100%; height: 116px; aspect-ratio: auto; border-radius: 12px; }
+.voice-view:not(.call) .stage.has-video #people > .tile.person > .avatar { top: 44%; }
+.voice-view:not(.call) .stage.has-video #people > .tile.person.speaking > .avatar { box-shadow: 0 0 0 3px #16161a, 0 0 0 5.5px var(--ok), 0 0 16px 5px rgba(67, 208, 138, .3); }
+.voice-view:not(.call) .stage.has-video #people > .tile.person .person-name { left: 8px; bottom: 8px; padding: 3px 8px; font-size: 12px; }
+.voice-view:not(.call) .stage.has-video #people > .tile.person .person-vol { width: 110px; }
+.voice-view:not(.call) .stage.has-video #people:empty { display: none; }
+/* a narrow window: the stage on top, the cards in a row under it (128 x 88) */
+.voice-view:not(.call) .stage.narrow.has-video { flex-direction: column; }
+.voice-view:not(.call) .stage.narrow.has-video #people { width: auto; height: 88px; flex-direction: row; overflow-x: auto; overflow-y: hidden; }
+.voice-view:not(.call) .stage.narrow.has-video #people > .tile.person { --pic: 40px; flex: none; width: 128px; height: 88px; }
+.voice-view:not(.call) .stage.narrow.has-video #people > .tile.person .person-vol { display: none; }
+/* a camera on the stage: its own shape (sizes from layoutStage), never cropped */
+.voice-view:not(.call) #streams > .tile.person.has-cam { flex: none; order: 1; width: auto; aspect-ratio: auto; border: 0; border-radius: 14px; background: #000; transition: box-shadow .15s; }
+.voice-view:not(.call) #streams > .tile.person.has-cam.speaking { box-shadow: 0 0 0 3px var(--ok); }
+.voice-view:not(.call) #streams > .tile.person.has-cam .person-name { left: 10px; bottom: 10px; padding: 3px 10px; border-radius: 8px; background: rgba(0, 0, 0, .55); color: #fff; font-size: 14px; }
+.voice-view:not(.call) #streams > .tile.person .person-cam { cursor: default; }
+/* a screen share on the stage: offered (a black panel with Watch stream) or watched, in its own shape */
+.voice-view:not(.call) #streams > .tile.screen { flex: none; border: 1px solid rgba(255, 255, 255, .06); border-radius: 14px; background: #000; }
+.voice-view:not(.call) .tile.screen .tile-cta { gap: 14px; }
+.voice-view:not(.call) .tile.screen .cta-text { color: rgba(255, 255, 255, .72); font-size: 15px; }
+.voice-view:not(.call) .tile.screen .tile-tag { top: auto; right: auto; bottom: 10px; left: 10px; max-width: calc(100% - 20px); padding: 4px 9px 4px 5px; border-radius: 9px; background: rgba(0, 0, 0, .6); }
+.voice-view:not(.call) .tile.screen .tile-tag { white-space: nowrap; }
+.voice-view:not(.call) .tile.screen .tile-who { min-width: 0; overflow: hidden; text-overflow: ellipsis; padding: 0; background: none; color: #fff; font-size: 14px; }
+.voice-view:not(.call) .tile.screen .tile-tag .stat { margin-left: 2px; padding: 0; border-radius: 0; background: none; color: rgba(255, 255, 255, .55); font: 500 12.5px inherit; font-family: inherit; font-variant-numeric: tabular-nums; pointer-events: auto; }
+.voice-view:not(.call) .tile.screen.playing:not(:hover) .tile-tag { opacity: 1; }
+.voice-view:not(.call) .tile.screen.playing.still .tile-tag { opacity: 0; }
+.voice-view:not(.call) .tile.screen .tile-bar { left: auto; right: 10px; bottom: 10px; padding: 3px 6px; border-radius: 10px; background: rgba(0, 0, 0, .6); }
+.voice-view:not(.call) .tile.screen.mine .tile-bar { opacity: 1; }
+.voice-view:not(.call) .tile.screen.playing .tile-close { display: grid; place-items: center; position: absolute; top: 10px; right: 10px; z-index: 2; width: 36px; height: 36px; border-radius: 50%; background: rgba(0, 0, 0, .78); color: #fff; }
+.voice-view:not(.call) .tile.screen.playing.still .tile-close { opacity: 0; }
+/* double-clicked: it fills the window, everything else out of sight; the button top-left (or Esc) goes back */
+.voice-view:not(.call) .tile.expanded { position: fixed !important; inset: 0; z-index: 70; width: auto !important; height: auto !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; background: #000; }
+.voice-view:not(.call) .tile.expanded .tile-back { display: grid; place-items: center; position: absolute; top: 14px; left: 14px; z-index: 2; width: 38px; height: 38px; border-radius: 50%; background: rgba(0, 0, 0, .78); color: #fff; }
+.voice-view:not(.call) .tile.expanded .person-full, .voice-view:not(.call) .tile.expanded.still .tile-back { display: none; }
