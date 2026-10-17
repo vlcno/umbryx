@@ -5405,6 +5405,8 @@ function personTile(u) {
     status,
     h('button', { class: 'ctl person-full', type: 'button', title: 'Full screen', onclick: () => toggleFullscreen(el) }, icon('expand')),
     mine ? null : h('div', { class: 'person-vol' }, icon('speaker'), slider));
+  // The tile takes the camera's shape once its size is known, and again if the sender turns their phone.
+  for (const name of ['loadedmetadata', 'resize']) cam.addEventListener(name, () => camShape(el, cam));
   // One click focuses the camera, two go full screen: the first waits a moment to see whether a second follows.
   let clickWait = 0;
   cam.addEventListener('click', () => { clearTimeout(clickWait); clickWait = setTimeout(() => toggleCamFocus(u.id), 220); });
@@ -5504,6 +5506,7 @@ function syncStage() {
     const camera = !u.camera ? null : mine ? (rtc.camera ? rtc.camera.stream : null) : (peer ? peer.cameraStream : null);
     if (el.parts.cam.srcObject !== (camera || null)) {
       el.parts.cam.srcObject = camera || null;
+      camShape(el, null);   // 16:9 until the new picture's first frame says its shape
       if (camera) el.parts.cam.play().catch(() => {});
     }
     el.classList.toggle('has-cam', !!camera);
@@ -5556,6 +5559,23 @@ function syncStage() {
 // else in a strip underneath; clicking it again, or Escape, goes back. Double-click, or the button in its
 // corner, for full screen.
 let camFocus = null;   // id of the person whose camera is in focus
+
+// A camera's shape, for the CSS: --cam-ratio ("1080 / 1920") and --cam-r (width over height). A phone held upright
+// sends a tall picture, a webcam a wide one; never assumed from the device, always read from the picture. Without a
+// picture yet, the tile is 16:9.
+function camShape(tile, video) {
+  const w = video ? video.videoWidth : 0;
+  const h = video ? video.videoHeight : 0;
+  if (!w || !h) {
+    tile.style.removeProperty('--cam-ratio');
+    tile.style.removeProperty('--cam-r');
+    tile.classList.remove('tall-cam');
+    return;
+  }
+  tile.style.setProperty('--cam-ratio', `${w} / ${h}`);
+  tile.style.setProperty('--cam-r', (w / h).toFixed(4));
+  tile.classList.toggle('tall-cam', h > w);
+}
 
 function layoutCams() {
   const people = $('#people');
@@ -5636,6 +5656,20 @@ function placePip() {
   el.style.top = top + Math.min(1, Math.max(0, pip.place.fy)) * freeY + 'px';
 }
 
+// The floating preview takes the shape of the picture showing in it: 272px wide for a wide camera, 272px tall for a
+// tall one.
+function pipShape() {
+  const el = $('#pip');
+  const video = $$('#pip video')[pip.front];
+  const w = video ? video.videoWidth : 0;
+  const h = video ? video.videoHeight : 0;
+  const before = el.style.getPropertyValue('--pip-ratio');
+  if (w && h) el.style.setProperty('--pip-ratio', `${w} / ${h}`); else el.style.removeProperty('--pip-ratio');
+  el.classList.toggle('tall', !!(w && h && h > w));
+  if (!el.hidden && el.style.getPropertyValue('--pip-ratio') !== before) placePip();   // still inside the window
+}
+for (const video of $$('#pip video')) for (const name of ['loadedmetadata', 'resize']) video.addEventListener(name, pipShape);
+
 function syncPip() {
   const el = $('#pip');
   const feeds = state.view.type === 'voice' || callAboveShown() ? [] : cameraFeeds();
@@ -5659,6 +5693,7 @@ function syncPip() {
     setTimeout(() => { if (!last.classList.contains('on')) last.srcObject = null; }, 600);
     Object.assign(pip, { uid: feed.user.id, stream: feed.stream, front: 1 - pip.front, since: performance.now() });
     $('#pipName').textContent = feed.user.name;
+    pipShape();
   }
   el.classList.toggle('speaking', rtc.speaking.has(feed.user.id));
 }

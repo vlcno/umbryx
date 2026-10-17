@@ -859,7 +859,8 @@ input.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2
 /* cameras: the video takes over the person's tile while it is on */
 .person-cam { display: none; }
 .tile.person.has-cam { display: block; padding: 0; aspect-ratio: 16 / 9; background: #000; }
-.tile.person.has-cam .person-cam { display: block; position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+/* a camera is never cropped: all of it shows, on black (its tile takes its shape where there's room, see camShape) */
+.tile.person.has-cam .person-cam { display: block; position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
 .tile.person.mine .person-cam { transform: scaleX(-1); }
 .tile.person.has-cam > .avatar, .tile.person.has-cam .person-banner, .tile.person.has-cam .person-state { display: none; }
 .tile.person.has-cam .person-name { position: absolute; left: 8px; bottom: 8px; max-width: calc(100% - 16px); padding: 2px 8px; border-radius: 6px; background: rgba(0, 0, 0, .7); font-size: 13px; }
@@ -868,7 +869,7 @@ input.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2
 /* while anyone has a camera on, people without one get a tile of the same shape */
 .voice-view:not(.call) .stage.has-cams:not(.has-streams) .tile.person:not(.has-cam) { aspect-ratio: 16 / 9; align-content: center; padding-top: 14px; }
 .voice-view:not(.call) .stage.has-cams:not(.has-streams) .tile.person:not(.has-cam) .person-banner { display: none; }
-.stage.has-streams .tile.person.has-cam { display: block; flex: none; width: 150px; height: 84px; padding: 0; border-radius: 10px; }
+.stage.has-streams .tile.person.has-cam { display: block; flex: none; width: min(150px, calc(84px * var(--cam-r, 1.7778))); height: 84px; padding: 0; border-radius: 10px; }
 .stage.has-streams .tile.person.has-cam .person-name { left: 5px; bottom: 5px; font-size: 11.5px; }
 .tile.person:fullscreen { border: 0; border-radius: 0; }
 .tile.person:fullscreen .person-cam { object-fit: contain; }
@@ -886,14 +887,20 @@ input.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2
 #people.gallery.focusing > .tile.person.focused { order: -1; width: var(--focus-w, 320px); margin-inline: calc((100% - var(--focus-w, 320px)) / 2); }
 #people.gallery.focusing > .tile.person:not(.focused) :is(.person-vol, .person-state, .person-banner, .person-full) { display: none; }
 #people.gallery.focusing > .tile.person:not(.focused):not(.has-cam) { display: grid; place-items: center; align-content: center; gap: 4px; padding: 6px; }
+/* a camera keeps its shape: as tall as the other tiles, as wide as its picture (a phone held upright is narrow) */
+#people.gallery > .tile.person.has-cam { width: min(var(--tile-w, 320px), calc(var(--tile-w, 320px) * 9 / 16 * var(--cam-r, 1.7778))); height: calc(var(--tile-w, 320px) * 9 / 16); aspect-ratio: auto; }
+#people.gallery.focusing > .tile.person.has-cam:not(.focused) { width: min(160px, calc(90px * var(--cam-r, 1.7778))); height: 90px; }
+#people.gallery.focusing > .tile.person.has-cam.focused { --cam-w: min(var(--focus-w, 320px), calc(var(--focus-w, 320px) * 9 / 16 * var(--cam-r, 1.7778)));
+  width: var(--cam-w); height: calc(var(--focus-w, 320px) * 9 / 16); margin-inline: calc((100% - var(--cam-w)) / 2); }
 #people.gallery.focusing > .tile.person:not(.focused) > .avatar { width: 38px; height: 38px; font-size: 15px; border-width: 0; }
 #people.gallery.focusing > .tile.person:not(.focused) .person-name { font-size: 11.5px; }
 
 /* the floating camera preview shown while you are in voice but looking elsewhere */
-.pip { position: fixed; z-index: 35; width: 272px; aspect-ratio: 16 / 9; overflow: hidden; border: 1px solid #fff; border-radius: 12px; background: #000; box-shadow: 0 12px 40px rgba(0, 0, 0, .85); cursor: grab; touch-action: none; user-select: none; }
+.pip { position: fixed; z-index: 35; width: 272px; aspect-ratio: var(--pip-ratio, 16 / 9); overflow: hidden; border: 1px solid #fff; border-radius: 12px; background: #000; box-shadow: 0 12px 40px rgba(0, 0, 0, .85); cursor: grab; touch-action: none; user-select: none; }
 .pip:active { cursor: grabbing; }
 .pip.speaking { border-color: var(--ok); box-shadow: 0 0 0 1px var(--ok), 0 12px 40px rgba(0, 0, 0, .85); }   /* green replaces the white line while they talk */
-.pip video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .4s; pointer-events: none; }
+.pip.tall { width: auto; height: 272px; }   /* a tall camera (a phone held upright): 272px tall instead of wide */
+.pip video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; opacity: 0; transition: opacity .4s; pointer-events: none; }
 .pip video.on { opacity: 1; }
 .pip-name { position: absolute; left: 8px; bottom: 8px; max-width: calc(100% - 16px); overflow: hidden; padding: 2px 8px; border-radius: 6px; background: rgba(0, 0, 0, .7); font-size: 12.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .pip-open { position: absolute; top: 6px; right: 6px; opacity: 0; border: 1px solid rgba(255, 255, 255, .14); background: rgba(0, 0, 0, .72); color: #fff; transition: opacity .12s; }
@@ -902,11 +909,12 @@ input.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2
 /* one-on-one calls: round pictures in a row and a compact control bar */
 .dock-group { display: contents; }
 .voice-view.call .people { align-items: center; }
-.voice-view.call .tile.person.has-cam { width: min(44vw, 460px); aspect-ratio: 16 / 9; overflow: hidden; border-radius: 12px; background: #000; }
+.voice-view.call .tile.person.has-cam { --box: min(44vw, 460px); width: min(var(--box), calc(var(--box) * 9 / 16 * var(--cam-r, 1.7778))); height: calc(var(--box) * 9 / 16);
+  aspect-ratio: auto; overflow: hidden; border-radius: 12px; background: #000; }
 .voice-view.call .tile.person.has-cam.speaking { box-shadow: 0 0 0 3px var(--ok); }
 .voice-view.call .tile.person.has-cam > .avatar { display: none; }
 .voice-view.call .tile.person.has-cam .person-name { left: auto; right: 8px; bottom: 8px; }
-.voice-view.call .stage.has-streams .tile.person.has-cam { width: 150px; height: 84px; }
+.voice-view.call .stage.has-streams .tile.person.has-cam { width: min(150px, calc(84px * var(--cam-r, 1.7778))); height: 84px; }
 .voice-view.call .stage.has-cams:not(.has-streams) .tile.person:not(.has-cam) .person-name { right: 8px; bottom: 8px; }
 .voice-view.call .stage.has-cams:not(.has-streams) .tile.person:not(.has-cam) { display: grid; place-items: center; width: min(44vw, 460px); aspect-ratio: 16 / 9; border: 1px solid var(--line); border-radius: 12px; background: var(--raised); }
 .voice-view.call .stage { justify-content: center; }
@@ -951,6 +959,10 @@ input.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2
 .main.call-above .voice-view.call .stage.has-cams:not(.has-streams) .tile.person { width: min(calc(50cqw - 9px), 560px, calc((55vh - 150px) * 16 / 9)); height: auto; aspect-ratio: 16 / 9; }
 .main.call-above.call-sized .voice-view.call .stage.has-cams:not(.has-streams) .people { container-type: size; }
 .main.call-above.call-sized .voice-view.call .stage.has-cams:not(.has-streams) .tile.person { width: min(calc(50cqw - 9px), calc(100cqh * 16 / 9)); }
+/* a camera there: the height a 16:9 picture would have, the width of its own shape */
+.main.call-above .voice-view.call .stage.has-cams:not(.has-streams) .tile.person.has-cam { --box: min(calc(50cqw - 9px), 560px, calc((55vh - 150px) * 16 / 9));
+  width: min(var(--box), calc(var(--box) * 9 / 16 * var(--cam-r, 1.7778))); height: calc(var(--box) * 9 / 16); aspect-ratio: auto; }
+.main.call-above.call-sized .voice-view.call .stage.has-cams:not(.has-streams) .tile.person.has-cam { --box: min(calc(50cqw - 9px), calc(100cqh * 16 / 9)); }
 .main.call-above .voice-view.call .stage.has-cams .person-state { top: auto; bottom: 10px; }
 
 /* members */

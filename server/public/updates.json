@@ -2,6 +2,14 @@
   "about": "What changed in Umbryx, newest first. The Home screen of the website and the desktop app shows the first three. Add an entry for every update.",
   "updates": [
     {
+      "date": "2026-10-17",
+      "title": "Cameras keep their shape",
+      "added": [],
+      "fixed": [
+        "Cameras are never cut off any more: a phone held upright shows tall, a webcam wide, in the voice window, the floating preview and the strip under a shared screen."
+      ]
+    },
+    {
       "date": "2026-10-16",
       "title": "Report and block",
       "added": [
