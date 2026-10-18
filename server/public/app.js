@@ -4890,6 +4890,23 @@ function tuneSdp(sdp) {
   return sdp;
 }
 
+// While sharing, the description a viewer sends back says where the share's bitrate starts
+// (x-google-start-bitrate, read by the sending side): near its target, not the few hundred kbps WebRTC otherwise
+// starts from and climbs out of over several seconds, stuttering as it goes. On the video codecs only.
+function startShareFast(sdp) {
+  const screen = rtc.screen;
+  if (!screen || !sdp) return sdp;
+  const kbps = Math.round(Math.min(targetBitrate(screen), 10e6) / 1000);
+  const video = new Set();
+  for (const hit of sdp.matchAll(/^a=rtpmap:(\d+) (H264|H265|VP8|VP9|AV1)\//gim)) video.add(hit[1]);
+  for (const pt of video) {
+    const fmtp = new RegExp(`^a=fmtp:${pt} (?![^\\r\\n]*x-google-start-bitrate)([^\\r\\n]*)`, 'm');
+    if (fmtp.test(sdp)) sdp = sdp.replace(fmtp, (line) => `${line};x-google-start-bitrate=${kbps}`);
+    else sdp = sdp.replace(new RegExp(`^(a=rtpmap:${pt} [^\\r\\n]*)(\\r?\\n)`, 'm'), `$1$2a=fmtp:${pt} x-google-start-bitrate=${kbps}$2`);
+  }
+  return sdp;
+}
+
 async function setLocal(pc, desc) {
   try { await pc.setLocalDescription({ type: desc.type, sdp: tuneSdp(desc.sdp) }); }
   catch { await pc.setLocalDescription(desc); }
@@ -4963,7 +4980,10 @@ async function onSignal(peer, data) {
       peer.remoteScreenId = data.meta.screen || null;
       peer.remoteCameraId = data.meta.camera || null;
     }
-    await pc.setRemoteDescription(desc);
+    if (rtc.screen && peer.wantsScreen) {
+      try { await pc.setRemoteDescription({ type: desc.type, sdp: startShareFast(desc.sdp) }); }
+      catch { await pc.setRemoteDescription(desc); }
+    } else await pc.setRemoteDescription(desc);
     if (desc.type === 'offer') {
       await setLocal(pc, await pc.createAnswer());
       signal(peer.id, { description: pc.localDescription, meta: localMeta() });
@@ -5202,8 +5222,8 @@ async function refreshGpuLine() {
     line.textContent = `GPU encoding ready: ${gpu.name}${gpu.engine ? ` (${gpu.engine})` : ''} · ${found.map((m) => CODEC_NAMES[m]).join(', ')}`
       + (gpu.vendor !== 'nvidia' && gpu.vendor !== 'apple' ? '. ' + gpuAdvice() : '');
   } else {
-    line.className = 'gpu-line warn';
-    line.textContent = 'No GPU encoder is available in this browser at this size, so the CPU would be used. ' + gpuAdvice();
+    line.className = 'gpu-line';
+    line.textContent = `Graphics card: ${gpu.name}. The browser didn't say which encoder it will use at this size; once you share, Umbryx checks and tells you if it's the CPU.`;
   }
 }
 
@@ -5232,9 +5252,17 @@ async function tuneVideoSender(sender, screen) {
   Object.assign(params.encodings[0], {
     maxBitrate: targetBitrate(screen), maxFramerate: screen.opts.fps, scaleResolutionDownBy: 1, priority: 'high', networkPriority: 'high',
   });
-  // When the network or encoder cannot keep up, drop frames rather than pixels.
-  params.degradationPreference = 'maintain-resolution';
+  // When the network or the encoder cannot keep up: for motion (games, video) keep it smooth and lower the
+  // resolution; for detail (text, code) keep it sharp and drop frames.
+  params.degradationPreference = screen.opts.mode === 'detail' ? 'maintain-resolution' : 'maintain-framerate';
   try { await sender.setParameters(params); } catch (err) { console.warn('encoder settings', err); }
+}
+
+// Every viewer's encode, after the stream settings change.
+function retuneViewers() {
+  const screen = rtc.screen;
+  if (!screen) return;
+  for (const peer of rtc.peers.values()) if (peer.screenTx[0]) tuneVideoSender(peer.screenTx[0].sender, screen);
 }
 
 function attachScreen(peer) {
@@ -5317,10 +5345,10 @@ async function startShare(opts, injected) {
   sendFlags(); syncStage(); updateControls();
   blip('share-start');
   if (injected) return;
-  if (!screen.gpuCodecs.length) {
-    screen.warnedCpu = true;
-    toast('No GPU encoder is available for this stream, so the CPU will be used. ' + gpuAdvice(), 10000);
-  } else if (opts.codec !== 'auto' && !screen.gpuCodecs.includes(opts.codec)) {
+  // Nothing is said about the CPU before anything is encoded: the browser's own answer is often wrong (the desktop
+  // app reports H.264 as CPU-only, then encodes it on the graphics card). guardEncoder warns if the share's own
+  // numbers show the CPU.
+  if (screen.gpuCodecs.length && opts.codec !== 'auto' && !screen.gpuCodecs.includes(opts.codec)) {
     toast(`${CODEC_NAMES[opts.codec] || 'That codec'} is not GPU-encoded here at this size. "Automatic" would use ${screen.gpuCodecs.map((m) => CODEC_NAMES[m]).join(' or ')}.`, 8000);
   }
   if (opts.audio && !audioTrack) {
@@ -5343,7 +5371,7 @@ async function retuneShare(opts) {
   screen.opts = { ...opts, codec: screen.opts.codec, audio: screen.opts.audio };
   screen.videoTrack.contentHint = opts.mode === 'detail' ? 'detail' : 'motion';
   try { await screen.videoTrack.applyConstraints(videoConstraints(opts)); } catch { /* keep the current capture size */ }
-  for (const peer of rtc.peers.values()) if (peer.screenTx[0]) tuneVideoSender(peer.screenTx[0].sender, screen);
+  retuneViewers();
 }
 
 function watch(id, on) {
