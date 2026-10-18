@@ -5,7 +5,8 @@
       "date": "2026-10-18",
       "title": "Smoother screen shares",
       "added": [
-        "Screen share resolution has an Automatic choice instead of 4K: your screen's own size (up to 4K), and each viewer's copy adjusts to their connection, so one slow connection doesn't make it worse for everyone."
+        "Screen share resolution has an Automatic choice instead of 4K: your screen's own size (up to 4K), and each viewer's copy adjusts to their connection, so one slow connection doesn't make it worse for everyone.",
+        "Desktop app: pick the screen or window to share right in the share settings, next to the quality, then Go live. No second window to find on another monitor (needs app 1.4.22, which updates itself)."
       ],
       "fixed": [
         "Screen shares start smooth: they no longer stutter for the first seconds while the connection speeds up.",

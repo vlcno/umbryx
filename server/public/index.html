@@ -181,6 +181,10 @@
 <dialog id="shareDlg" class="dlg">
   <form method="dialog" id="shareForm">
     <h3 id="shareTitle">Share your screen</h3>
+    <div class="share-sources" id="shSources" hidden>
+      <div class="share-grid" id="shGrid" role="listbox" aria-label="What to share"></div>
+      <p id="shHdr" class="gpu-line" hidden></p>
+    </div>
     <div class="grid2">
       <label class="field"><span>Resolution</span>
         <select id="shRes">
@@ -225,10 +229,10 @@
           <option value="video/VP8">VP8</option>
         </select>
       </label>
-      <label class="check"><input type="checkbox" id="shAudio"><span>Share sound too</span></label>
+      <label class="check" id="shAudioRow"><input type="checkbox" id="shAudio"><span>Share sound too</span></label>
     </div>
     <p id="shGpu" class="gpu-line"></p>
-    <p class="hint">A stream is never upscaled: 4K needs a 4K screen or window. For sound, pick a tab or your entire screen and switch on the audio option in the browser's picker.</p>
+    <p class="hint" id="shHint">A stream is never upscaled: 4K needs a 4K screen or window. For sound, pick a tab or your entire screen and switch on the audio option in the browser's picker.</p>
     <div class="dlg-actions">
       <button class="btn danger" value="stop" id="shStop" formnovalidate>Stop sharing</button>
       <span class="spacer"></span>

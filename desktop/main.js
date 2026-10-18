@@ -305,11 +305,18 @@ function guardSession() {
   });
   ses.setPermissionCheckHandler((contents, permission, origin) => (GRANTED.has(permission) && fromServer(origin)) || youTubeFullScreen(contents, permission, origin));
 
-  // Screen sharing: show our own picker, then hand the chosen screen or window to the page.
+  // Screen sharing: hand the chosen screen or window to the page. A page that lists them in its own share settings
+  // (1.4.22 on, see page:share-choose) has already said which; otherwise our own picker asks.
   ses.setDisplayMediaRequestHandler(async (request, callback) => {
     const refuse = () => { try { callback(null); } catch { try { callback({}); } catch { /* already refused */ } } };
     try {
       if (!fromServer(request.frame ? request.frame.url : request.securityOrigin)) { refuse(); return; }
+      const chosen = takeShareChoice(request.frame ? request.frame.url : request.securityOrigin);
+      if (chosen) {
+        const video = { id: chosen.id, name: chosen.name };
+        callback(request.audioRequested && chosen.audio && !MAC ? { video, audio: 'loopback' } : { video });
+        return;
+      }
       const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 384, height: 216 } });
       // A Mac hands an app the picture of a screen but not its sound, so the picker does not offer it there.
       const choice = await pickSource(sources, request.audioRequested && !MAC);
@@ -354,6 +361,13 @@ function pickSource(sources, audioWanted) {
       webPreferences: { preload: PRELOAD, contextIsolation: true, sandbox: true },
     });
     picker.setMenu(null);
+    // Over the app's own window, on its monitor (by itself it opens in the middle of the main monitor, behind
+    // whatever is there).
+    if (win && !win.isDestroyed()) {
+      const at = win.getBounds();
+      const [w, h] = picker.getSize();
+      picker.setPosition(Math.round(at.x + (at.width - w) / 2), Math.round(at.y + Math.max(0, (at.height - h) / 2)));
+    }
     picking = (choice) => {
       picking = null;
       resolve(choice);
@@ -1520,6 +1534,43 @@ ipcMain.on('rail:menu', (event, index) => {
     { type: 'separator' },
     { label: `Remove ${name} from the list`, click: () => removeServer(settings.servers.indexOf(saved)) },
   ]).popup({ window: win });
+});
+
+// Screen share in one window (1.4.22 on): a server's page lists the screens and windows in its own share settings,
+// with their pictures, then says which it picked just before it asks to share (see setDisplayMediaRequestHandler).
+const SHARE_SOURCE_ID = /^(screen|window):[0-9]+:[0-9]+$/;
+let shareChoice = null;   // { origin, id, name, audio, at }
+
+function takeShareChoice(url) {
+  const choice = shareChoice;
+  shareChoice = null;
+  let origin = '';
+  try { origin = new URL(url).origin; } catch { return null; }
+  return choice && choice.origin === origin && Date.now() - choice.at < 20000 ? choice : null;
+}
+
+ipcMain.handle('page:share-sources', async (event) => {
+  if (!senderOrigin(event)) return null;
+  const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 } });
+  const hdr = hdrDisplayIds();
+  return {
+    audio: !MAC,   // a Mac hands an app the picture of a screen but not its sound
+    hdrScreensConverted: HDR_SCREENS_CONVERTED,
+    sources: sources.filter((s) => SHARE_SOURCE_ID.test(s.id)).map((s) => ({
+      id: s.id,
+      name: s.name,
+      screen: s.id.startsWith('screen:'),
+      hdr: s.id.startsWith('screen:') && hdr.has(String(s.display_id)),
+      thumbnail: s.thumbnail.isEmpty() ? '' : s.thumbnail.toDataURL(),
+    })),
+  };
+});
+
+ipcMain.handle('page:share-choose', (event, choice) => {
+  const origin = senderOrigin(event);
+  if (!origin || !choice || typeof choice.id !== 'string' || !SHARE_SOURCE_ID.test(choice.id)) return false;
+  shareChoice = { origin, id: choice.id, name: String(choice.name || '').slice(0, 200), audio: !!choice.audio, at: Date.now() };
+  return true;
 });
 
 ipcMain.on('picker:choose', (event, choice) => {

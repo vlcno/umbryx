@@ -87,6 +87,10 @@ contextBridge.exposeInMainWorld('umbryxApp', {
   moveServer: (info) => ipcRenderer.send('page:move', plain(info)),
   railOver: () => railOver,
   onRail: (listener) => { if (typeof listener === 'function') railListeners.push(listener); },
+  // From 1.4.22: screen share in one window. The page lists screens and windows in its own share settings, then says
+  // which one just before asking to share, so no picker window opens.
+  shareSources: () => ipcRenderer.invoke('page:share-sources'),
+  shareChoose: (choice) => ipcRenderer.invoke('page:share-choose', plain(choice)),
 });
 
 if (location.protocol === 'file:') {

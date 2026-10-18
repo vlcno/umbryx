@@ -5390,6 +5390,58 @@ function watch(id, on) {
   syncStage();
 }
 
+/* In the desktop app (1.4.22 on) the share settings list the screens and windows themselves, with their pictures,
+   so choosing what to share and how happens in one window (the app's own picker window opened elsewhere, often on
+   another monitor). The app then grants the share without asking again (see its page:share-choose). */
+const SHARE_HINT = $('#shHint').textContent;
+const shareInOne = () => !!(appShell && appShell.shareSources && appShell.shareChoose);
+let sharePick = null;    // { id, name, hdr } chosen in the list
+let shareHdrOk = true;   // whether this Windows converts a whole HDR screen properly (the app says)
+
+function explainShareHdr() {
+  const note = $('#shHdr');
+  note.hidden = !(sharePick && sharePick.hdr);
+  if (note.hidden) return;
+  note.className = 'gpu-line' + (shareHdrOk ? '' : ' warn');
+  note.textContent = shareHdrOk
+    ? 'This screen is in HDR. It is converted to SDR for the stream. Highlights brighter than SDR white are flattened to white.'
+    : 'This screen is in HDR, and this version of Windows shares a whole HDR screen far too bright. Share the game or app window instead, which is converted to SDR properly, or update Windows 11 to 24H2 or newer.';
+}
+
+async function loadShareSources() {
+  const grid = $('#shGrid');
+  grid.replaceChildren(h('div', { class: 'chan-empty', text: 'Finding your screens and windows…' }));
+  let data = null;
+  try { data = await appShell.shareSources(); } catch { data = null; }
+  if (!data || !Array.isArray(data.sources)) { grid.replaceChildren(h('div', { class: 'chan-empty', text: 'Could not list your screens and windows.' })); return; }
+  shareHdrOk = data.hdrScreensConverted !== false;
+  $('#shAudioRow').hidden = !data.audio;   // a Mac app gets a screen's picture but not its sound
+  const before = sharePick && data.sources.find((s) => s.id === sharePick.id);
+  sharePick = before ? { id: before.id, name: before.name, hdr: !!before.hdr } : null;
+  const tile = (s) => {
+    const el = h('button', { class: 'share-source' + (sharePick && sharePick.id === s.id ? ' selected' : ''), type: 'button', role: 'option', title: s.name,
+      onclick: () => {
+        sharePick = { id: s.id, name: s.name, hdr: !!s.hdr };
+        for (const other of grid.querySelectorAll('.selected')) other.classList.remove('selected');
+        el.classList.add('selected');
+        $('#shGo').disabled = false;
+        explainShareHdr();
+      },
+      ondblclick: () => { sharePick = { id: s.id, name: s.name, hdr: !!s.hdr }; $('#shGo').click(); } },
+    s.thumbnail ? h('img', { src: s.thumbnail, alt: '' }) : h('span', { class: 'share-blank' }),
+    h('span', { class: 'share-name', text: s.name }),
+    s.hdr ? h('em', { class: 'share-hdr', text: 'HDR' }) : null);
+    return el;
+  };
+  const screens = data.sources.filter((s) => s.screen);
+  const windows = data.sources.filter((s) => !s.screen);
+  grid.replaceChildren(
+    ...(screens.length ? [h('div', { class: 'share-group', text: 'Screens' }), ...screens.map(tile)] : []),
+    ...(windows.length ? [h('div', { class: 'share-group', text: 'Windows' }), ...windows.map(tile)] : []));
+  $('#shGo').disabled = !sharePick;
+  explainShareHdr();
+}
+
 function openShareDialog() {
   if (!rtc.channel) { toast('Join a voice channel or a call first.'); return; }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
@@ -5406,7 +5458,14 @@ function openShareDialog() {
   $('#shAudio').checked = !!o.audio;
   $('#shCodec').disabled = $('#shAudio').disabled = live;
   $('#shareTitle').textContent = live ? 'Stream settings' : 'Share your screen';
-  $('#shGo').textContent = live ? 'Apply' : 'Choose what to share';
+  const inOne = shareInOne() && !live;
+  $('#shSources').hidden = !inOne;
+  $('#shareDlg').classList.toggle('share-wide', inOne);
+  $('#shAudioRow').hidden = false;
+  $('#shHint').textContent = inOne ? 'A stream is never upscaled: 4K needs a 4K screen or window. Sound shares everything your computer plays.' : SHARE_HINT;
+  $('#shGo').textContent = live ? 'Apply' : inOne ? 'Go live' : 'Choose what to share';
+  $('#shGo').disabled = false;
+  if (inOne) loadShareSources();
   $('#shStop').hidden = !live;
   $('#shGpu').textContent = '';
   refreshGpuLine();
@@ -5425,7 +5484,13 @@ $('#shareForm').addEventListener('submit', (event) => {
     bitrate: +$('#shRate').value, codec: $('#shCodec').value, audio: $('#shAudio').checked,
   };
   if (rtc.screen) { Object.assign(shareOpts, opts, { codec: shareOpts.codec, audio: shareOpts.audio }); retuneShare(opts); }
-  else { Object.assign(shareOpts, opts); startShare(opts); }   // called inside the click so the picker may open
+  else if (shareInOne()) {
+    if (!sharePick) { event.preventDefault(); toast('Pick a screen or window to share.'); return; }
+    Object.assign(shareOpts, opts);
+    const pick = sharePick;
+    // The app is told what to share, then the share is asked for (still inside the click, which it needs).
+    appShell.shareChoose({ id: pick.id, name: pick.name, audio: opts.audio && !$('#shAudioRow').hidden }).then(() => startShare(opts), () => startShare(opts));
+  } else { Object.assign(shareOpts, opts); startShare(opts); }   // called inside the click so the picker may open
   store.set('share', shareOpts);
 });
 
