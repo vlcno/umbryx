@@ -4,11 +4,14 @@
     {
       "date": "2026-10-18",
       "title": "Smoother screen shares",
-      "added": [],
+      "added": [
+        "Screen share resolution has an Automatic choice, now the default: your screen's own size (up to 4K), and each viewer's copy adjusts to their connection, so one slow connection doesn't make it worse for everyone."
+      ],
       "fixed": [
         "Screen shares start smooth: they no longer stutter for the first seconds while the connection speeds up.",
         "When the connection can't keep up, a share in Motion mode (games, video) lowers its sharpness instead of its frame rate. Detail mode (text, code) still keeps it sharp.",
-        "No more \"the CPU will be used\" warning before sharing when the graphics card is in fact used. Umbryx now only warns if the share really runs on the CPU."
+        "No more \"the CPU will be used\" warning before sharing when the graphics card is in fact used. Umbryx now only warns if the share really runs on the CPU.",
+        "In the desktop app, a stream you double-click to fill the window no longer hides its back and close buttons under the server column and the window's buttons."
       ]
     },
     {

@@ -428,9 +428,15 @@ const settings = Object.assign(
 // Noise suppression: 'strong' (RNNoise, see denoise), 'standard' (the browser's own) or 'off'. It used to be on or
 // off, and on was the browser's; everyone who had it on gets Strong.
 if (!['strong', 'standard', 'off'].includes(settings.noiseMode)) settings.noiseMode = settings.noiseSuppression === false ? 'off' : 'strong';
+// height: 'auto' (the screen's own size up to 4K; each viewer's copy then fits their connection, see tuneVideoSender)
+// or a fixed size. 4K was the default before Automatic: whoever still has it gets Automatic, once.
 const shareOpts = Object.assign(
-  { height: 2160, fps: 60, bitrate: 0, codec: 'auto', mode: 'motion', audio: true },
+  { height: 'auto', fps: 60, bitrate: 0, codec: 'auto', mode: 'motion', audio: true },
   store.get('share', {}));
+if (!store.get('shareAuto', false)) {
+  if (shareOpts.height === 2160) shareOpts.height = 'auto';
+  store.set('shareAuto', true);
+}
 const volumes = store.get('volumes', {});
 
 const state = {
@@ -5212,7 +5218,8 @@ function guardEncoder(peer, stats) {
 async function refreshGpuLine() {
   const line = $('#shGpu');
   const gpu = gpuInfo();
-  const picked = +$('#shRes').value;
+  const chosen = $('#shRes').value;
+  const picked = chosen === 'auto' ? Math.min(2160, Math.round(window.screen.height * devicePixelRatio)) : +chosen;
   const height = picked || Math.round(window.screen.height * devicePixelRatio);
   const width = picked ? Math.round(picked * 16 / 9) : Math.round(window.screen.width * devicePixelRatio);
   const fps = +$('#shFps').value;
@@ -5231,7 +5238,10 @@ async function refreshGpuLine() {
 
 function videoConstraints(o) {
   const video = { frameRate: { ideal: o.fps, max: o.fps } };
-  if (o.height) {
+  if (o.height === 'auto') {   // the screen's own size, at most 4K
+    video.width = { max: 3840 };
+    video.height = { max: 2160 };
+  } else if (o.height) {
     const width = Math.round(o.height * 16 / 9);
     video.width = { ideal: width, max: width };
     video.height = { ideal: o.height, max: o.height };
@@ -5414,7 +5424,7 @@ $('#shareForm').addEventListener('submit', (event) => {
   if (action === 'stop') { endShare(); return; }
   if (action !== 'go') return;
   const opts = {
-    height: +$('#shRes').value, fps: +$('#shFps').value, mode: $('#shMode').value,
+    height: $('#shRes').value === 'auto' ? 'auto' : +$('#shRes').value, fps: +$('#shFps').value, mode: $('#shMode').value,
     bitrate: +$('#shRate').value, codec: $('#shCodec').value, audio: $('#shAudio').checked,
   };
   if (rtc.screen) { Object.assign(shareOpts, opts, { codec: shareOpts.codec, audio: shareOpts.audio }); retuneShare(opts); }

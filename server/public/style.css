@@ -1370,3 +1370,9 @@ html.light-theme { --partner: #1f2328; --partner-text: #1f2328; --partner-mark: 
 .voice-view:not(.call) .tile.expanded { position: fixed !important; inset: 0; z-index: 70; width: auto !important; height: auto !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; background: #000; }
 .voice-view:not(.call) .tile.expanded .tile-back { display: grid; place-items: center; position: absolute; top: 14px; left: 14px; z-index: 2; width: 38px; height: 38px; border-radius: 50%; background: rgba(0, 0, 0, .78); color: #fff; }
 .voice-view:not(.call) .tile.expanded .person-full, .voice-view:not(.call) .tile.expanded.still .tile-back { display: none; }
+/* In the desktop app the column of servers (a layer of its own) and the window's own buttons (top right) sit over the
+   page: a share or camera filling the window stays clear of them, or its back and x buttons end up underneath. */
+html.app-rail .voice-view:not(.call) .tile.expanded { top: var(--titlebar) !important; }
+html.app-rail:not(.rail-off) .voice-view:not(.call) .tile.expanded { left: var(--rail-w) !important; }
+/* real full screen (the button on a share, or on a camera): square, edge to edge */
+.voice-view:not(.call) .tile:fullscreen { border: 0 !important; border-radius: 0 !important; box-shadow: none !important; }
