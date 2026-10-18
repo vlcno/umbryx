@@ -5571,13 +5571,15 @@ function screenTile(u) {
     h('div', { class: 'tile-cta' }, note,
       mine ? show : h('button', { class: 'btn primary', type: 'button', onclick: () => watch(u.id, true) }, 'Watch stream')),
     mine ? null : h('button', { class: 'ctl tile-close', type: 'button', title: 'Stop watching', onclick: () => { if (expanded === el) toggleExpand(el); watch(u.id, false); } }, icon('x')),
+    // Full screen (the whole monitor), beside the x while watching; Esc or this again leaves it.
+    mine ? null : h('button', { class: 'ctl tile-full', type: 'button', title: 'Full screen', onclick: () => toggleFullscreen(el) }, icon('expand')),
     h('button', { class: 'ctl tile-back', type: 'button', title: 'Back (Esc)', onclick: () => toggleExpand(el) }, icon('shrink')),
     h('div', { class: 'tile-bar' },
       mine ? null : icon('speaker'), mine ? null : slider,
       h('span', { class: 'spacer' }),
       mine ? h('button', { class: 'ctl', type: 'button', title: 'Stream settings', onclick: openShareDialog }, icon('sliders')) : null,
       // No full screen for your own share: showing your own screen full size makes it film itself.
-      mine ? null : h('button', { class: 'ctl', type: 'button', title: 'Full screen', onclick: () => toggleFullscreen(el) }, icon('expand'))));
+      mine ? null : h('button', { class: 'ctl bar-full', type: 'button', title: 'Full screen', onclick: () => toggleFullscreen(el) }, icon('expand'))));
   // Double-click: in a voice channel it fills the window (Esc, or the button top-left, goes back); in a call, full
   // screen as before.
   if (!mine) video.addEventListener('dblclick', () => { if (channelById(rtc.channel)) toggleExpand(el); else toggleFullscreen(el); });

@@ -12,7 +12,8 @@
         "Screen shares start smooth: they no longer stutter for the first seconds while the connection speeds up.",
         "When the connection can't keep up, a share in Motion mode (games, video) lowers its sharpness instead of its frame rate. Detail mode (text, code) still keeps it sharp.",
         "No more \"the CPU will be used\" warning before sharing when the graphics card is in fact used. Umbryx now only warns if the share really runs on the CPU.",
-        "In the desktop app, a stream you double-click to fill the window no longer hides its back and close buttons under the server column and the window's buttons."
+        "In the desktop app, a stream you double-click to fill the window no longer hides its back and close buttons under the server column and the window's buttons.",
+        "A full-screen button sits next to the x on a stream you're watching, instead of hiding until you hover."
       ]
     },
     {

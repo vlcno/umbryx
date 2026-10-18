@@ -1341,7 +1341,7 @@ html.light-theme { --partner: #1f2328; --partner-text: #1f2328; --partner-mark: 
 .voice-view:not(.call) #people > .tile.person :is(.person-state, .person-full, .person-banner) { display: none; }
 .voice-view:not(.call) #people > .tile.person .person-vol { display: flex; position: absolute; top: 10px; right: 10px; width: 132px; padding: 3px 8px; border-radius: 8px; background: rgba(0, 0, 0, .6); color: #fff; }
 .voice-view:not(.call) #people > .tile.person.linking .person-vol { display: none; }
-.person-live, .person-spin, .tile-back, .tile-close { display: none; }
+.person-live, .person-spin, .tile-back, .tile-close, .tile-full { display: none; }
 .voice-view:not(.call) .tile.person.sharing .person-live { display: block; position: absolute; top: 10px; left: 10px; }
 .voice-view:not(.call) .tile.person.linking .person-spin { display: block; position: absolute; top: 12px; right: 12px; width: 16px; height: 16px; border: 2px solid rgba(255, 255, 255, .22); border-top-color: #fff; border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -1376,7 +1376,9 @@ html.light-theme { --partner: #1f2328; --partner-text: #1f2328; --partner-mark: 
 .voice-view:not(.call) .tile.screen .tile-bar { left: auto; right: 10px; bottom: 10px; padding: 3px 6px; border-radius: 10px; background: rgba(0, 0, 0, .6); }
 .voice-view:not(.call) .tile.screen.mine .tile-bar { opacity: 1; }
 .voice-view:not(.call) .tile.screen.playing .tile-close { display: grid; place-items: center; position: absolute; top: 10px; right: 10px; z-index: 2; width: 36px; height: 36px; border-radius: 50%; background: rgba(0, 0, 0, .78); color: #fff; }
-.voice-view:not(.call) .tile.screen.playing.still .tile-close { opacity: 0; }
+.voice-view:not(.call) .tile.screen.playing .tile-full { display: grid; place-items: center; position: absolute; top: 10px; right: 54px; z-index: 2; width: 36px; height: 36px; border-radius: 50%; background: rgba(0, 0, 0, .78); color: #fff; }
+.voice-view:not(.call) .tile.screen.playing.still :is(.tile-close, .tile-full) { opacity: 0; }
+.voice-view:not(.call) .tile.screen .bar-full { display: none; }   /* the round one at the top does it */
 /* double-clicked: it fills the window, everything else out of sight; the button top-left (or Esc) goes back */
 .voice-view:not(.call) .tile.expanded { position: fixed !important; inset: 0; z-index: 70; width: auto !important; height: auto !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; background: #000; }
 .voice-view:not(.call) .tile.expanded .tile-back { display: grid; place-items: center; position: absolute; top: 14px; left: 14px; z-index: 2; width: 38px; height: 38px; border-radius: 50%; background: rgba(0, 0, 0, .78); color: #fff; }
