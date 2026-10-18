@@ -429,14 +429,11 @@ const settings = Object.assign(
 // off, and on was the browser's; everyone who had it on gets Strong.
 if (!['strong', 'standard', 'off'].includes(settings.noiseMode)) settings.noiseMode = settings.noiseSuppression === false ? 'off' : 'strong';
 // height: 'auto' (the screen's own size up to 4K; each viewer's copy then fits their connection, see tuneVideoSender)
-// or a fixed size. 4K was the default before Automatic: whoever still has it gets Automatic, once.
+// or a fixed size. There is no 4K choice any more (Automatic goes up to it): whoever had it gets Automatic.
 const shareOpts = Object.assign(
   { height: 'auto', fps: 60, bitrate: 0, codec: 'auto', mode: 'motion', audio: true },
   store.get('share', {}));
-if (!store.get('shareAuto', false)) {
-  if (shareOpts.height === 2160) shareOpts.height = 'auto';
-  store.set('shareAuto', true);
-}
+if (shareOpts.height === 2160) shareOpts.height = 'auto';
 const volumes = store.get('volumes', {});
 
 const state = {
